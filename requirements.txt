@@ -1,0 +1,26 @@
+# Base de Datos
+asyncpg>=0.29.0
+SQLAlchemy>=2.0.23
+greenlet>=3.0.3
+
+# Entorno
+python-dotenv==1.0.0
+
+# API y validaciones
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.4.2
+
+# Conectores
+ccxt==4.1.45
+websockets==12.0
+
+# Análisis de datos y Análisis Técnico
+pandas>=2.2.0
+numpy>=2.2.6
+pandas-ta==0.4.71b0
+
+
+# Machine Learning
+scikit-learn>=1.3.2
+joblib>=1.3.2

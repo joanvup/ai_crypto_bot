@@ -1,0 +1,39 @@
+# =========================
+# Entornos y Credenciales
+# =========================
+.env
+venv/
+env/
+.venv/
+
+# =========================
+# Archivos de Python Core
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# =========================
+# Archivos Generados por el Bot
+# =========================
+# Ignorar los logs de texto, pero mantener la carpeta
+logs/*.log
+
+# Ignorar los pesos de los modelos IA entrenados (suelen ser pesados)
+ai_engine/saved_models/*.json
+ai_engine/saved_models/*.xgb
+ai_engine/saved_models/*.pkl
+
+# =========================
+# Entornos de Desarrollo (IDEs)
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Archivos del Sistema Operativo
+# =========================
+.DS_Store
+Thumbs.db
