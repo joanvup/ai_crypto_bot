@@ -41,7 +41,8 @@ class RiskManager:
             return None, None
 
         # Redondear a 2 decimales para evitar problemas de precisión en Binance
-        return round(stop_loss, 2), round(take_profit, 2)
+        
+        return float(stop_loss), float(take_profit)
 
     def calculate_position_size(self, balance: float, current_price: float, stop_loss: float) -> float:
         """
