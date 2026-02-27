@@ -21,7 +21,7 @@ class AssetState:
         self.ws_symbol = symbol.replace('/', '').lower()
         self.ai = AIPredictor(symbol, timeframe)
         self.is_in_position = False
-        elf.trade_in_progress = False 
+        self.trade_in_progress = False 
         self.current_trade = None
         self.current_price = 0.0
         self.latest_prediction = "ESPERANDO"
