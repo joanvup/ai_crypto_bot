@@ -21,6 +21,7 @@ class AssetState:
         self.ws_symbol = symbol.replace('/', '').lower()
         self.ai = AIPredictor(symbol, timeframe)
         self.is_in_position = False
+        elf.trade_in_progress = False 
         self.current_trade = None
         self.current_price = 0.0
         self.latest_prediction = "ESPERANDO"
@@ -150,12 +151,16 @@ class BotCore:
     async def _execute_trade(self, symbol: str, direction: str, df):
         asset = self.assets[symbol]
         
-        # --- CONTROL DE RIESGO GLOBAL (LOCK) ---
+        # --- CONTROL DE RIESGO GLOBAL BLINDADO ---
         async with self.trade_lock:
-            current_open_trades = sum(1 for a in self.assets.values() if a.is_in_position)
+            # Contamos las que ya están abiertas + las que están viajando a Binance
+            current_open_trades = sum(1 for a in self.assets.values() if a.is_in_position or a.trade_in_progress)
+            
             if current_open_trades >= self.max_open_trades:
-                # Ignorar la señal, límite alcanzado
-                return
+                return # Límite alcanzado, ignoramos en silencio
+                
+            # Reservamos el cupo INMEDIATAMENTE para que el siguiente hilo no pase
+            asset.trade_in_progress = True
 
         try:
             balance_info = await self.client.get_balance()
@@ -163,18 +168,19 @@ class BotCore:
             
             theoretical_price = float(df['close'].iloc[-1])
             atr = float(df['ATRr_14'].iloc[-1])
-            sl_initial, tp_initial = self.risk.calculate_sl_tp(direction, theoretical_price, atr)
             
-            if direction == 'LONG' and sl_initial >= theoretical_price: sl_initial = theoretical_price - (atr * 1.5)
-            elif direction == 'SHORT' and sl_initial <= theoretical_price: sl_initial = theoretical_price + (atr * 1.5)
+            sl, tp = self.risk.calculate_sl_tp(direction, theoretical_price, atr)
             
-            size = float(self.risk.calculate_position_size(balance, theoretical_price, sl_initial))
+            if direction == 'LONG' and sl >= theoretical_price: sl = theoretical_price - (atr * 1.5)
+            elif direction == 'SHORT' and sl <= theoretical_price: sl = theoretical_price + (atr * 1.5)
+            
+            size = float(self.risk.calculate_position_size(balance, theoretical_price, sl))
             if size <= 0: return
 
             print(f"\n⚡ SEÑAL [{symbol}]: {direction} | Confianza: {asset.latest_confidence:.2f}%")
             side = 'BUY' if direction == 'LONG' else 'SELL'
             
-            results = await self.client.place_atomic_trade(symbol, side, size, sl_initial, tp_initial)
+            results = await self.client.place_atomic_trade(symbol, side, size, sl, tp)
             
             if results and isinstance(results, list) and len(results) >= 1:
                 entry_res = results[0]
@@ -183,7 +189,7 @@ class BotCore:
                     return
 
                 main_id = str(entry_res.get('orderId'))
-                await asyncio.sleep(0.6) # Sincronización
+                await asyncio.sleep(0.6) 
                 
                 real_order = await self.client.fetch_order_details(symbol, main_id)
                 if real_order and real_order.get('average'): real_entry_price = float(real_order['average'])
@@ -192,26 +198,30 @@ class BotCore:
 
                 sl_real, tp_real = self.risk.calculate_sl_tp(direction, real_entry_price, atr)
 
+                sl_res = next((o for o in results if o.get('type') in ['STOP', 'STOP_MARKET']), None)
+                tp_res = next((o for o in results if o.get('type') in['TAKE_PROFIT', 'TAKE_PROFIT_MARKET']), None)
+
                 async with AsyncSessionLocal() as session:
                     new_trade = Trade(
                         symbol=symbol, side=direction, entry_price=real_entry_price,
-                        quantity=size, stop_loss=sl_real, take_profit=tp_real, atr_at_entry=atr,
+                        quantity=size, stop_loss=float(sl_real), take_profit=float(tp_real), atr_at_entry=float(atr),
                         binance_order_id=main_id,
-                        binance_sl_id=str(results[1].get('orderId')) if len(results) > 1 else None,
-                        binance_tp_id=str(results[2].get('orderId')) if len(results) > 2 else None,
+                        binance_sl_id=str(sl_res.get('orderId')) if sl_res else None,
+                        binance_tp_id=str(tp_res.get('orderId')) if tp_res else None,
                         status='OPEN', entry_time=datetime.utcnow()
                     )
                     session.add(new_trade)
                     await session.commit()
                     await session.refresh(new_trade)
                     
-                    # Actualizar el estado DEL ACTIVO ESPECÍFICO
                     asset.current_trade = new_trade
                     asset.is_in_position = True
-                    
                     print(f"✅ TRADE SINCRONIZADO [{symbol}]: Entrada a ${real_entry_price}")
         except Exception as e:
             print(f"❌ Error ejecutando trade para {symbol}: {e}")
+        finally:
+            # Pase lo que pase (éxito o error de red), liberamos el estado de reserva de cupo
+            asset.trade_in_progress = False
 
     async def _monitor_advanced_position(self, symbol: str):
         asset = self.assets[symbol]
