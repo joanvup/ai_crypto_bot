@@ -33,14 +33,19 @@ class OpenTradeInfo(BaseModel):
     atr: float
     is_trailing: bool
 
-# --- CLASE ACTUALIZADA (Usa OpenTradeInfo) ---
-class BotStatus(BaseModel):
-    is_running: bool
-    active_symbol: str
+class AssetStatus(BaseModel):
+    symbol: str
     current_price: float
     is_in_position: bool
     position_type: Optional[str] = None
     ai_prediction: str
     ai_confidence: float
+    open_trade: Optional[OpenTradeInfo] = None
+
+# --- CLASE GLOBAL ACTUALIZADA ---
+class BotStatus(BaseModel):
+    is_running: bool
+    global_open_trades: int
+    max_open_trades: int
     ai_threshold: float
-    open_trade: Optional[OpenTradeInfo] = None 
+    assets: list[AssetStatus] # Ahora es una lista de todos los activos escaneados

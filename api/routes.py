@@ -20,37 +20,52 @@ def get_bot_status():
 async def get_status():
     bot = get_bot_status()
     
-    position_type = None
-    open_trade_info = None
+    # Contar operaciones globales activas
+    active_count = sum(1 for asset in bot.assets.values() if asset.is_in_position)
     
-    if bot.current_trade and bot.is_in_position:
-        t = bot.current_trade
-        position_type = t.side
+    asset_list =[]
+    
+    # Recorrer todos los activos monitoreados
+    for symbol, asset in bot.assets.items():
+        open_trade_info = None
+        position_type = None
         
-        # Calcular PNL y ROE en tiempo real
-        pnl = (bot.current_price - t.entry_price) * t.quantity if t.side == 'LONG' else (t.entry_price - bot.current_price) * t.quantity
-        roe = (pnl / (t.entry_price * t.quantity)) * 100
-        
-        open_trade_info = {
-            "entry_price": t.entry_price,
-            "stop_loss": t.stop_loss,
-            "take_profit": t.take_profit,
-            "pnl": round(pnl, 2),
-            "roe": round(roe, 2),
-            "atr": t.atr_at_entry,
-            "is_trailing": t.is_trailing
-        }
+        if asset.is_in_position and asset.current_trade:
+            t = asset.current_trade
+            position_type = t.side
+            
+            # Cálculo de PNL en tiempo real
+            if t.side == 'LONG': pnl = (asset.current_price - t.entry_price) * t.quantity
+            else: pnl = (t.entry_price - asset.current_price) * t.quantity
+            
+            roe = (pnl / (t.entry_price * t.quantity)) * 100 if t.entry_price > 0 else 0
+            
+            open_trade_info = {
+                "entry_price": t.entry_price,
+                "stop_loss": t.stop_loss,
+                "take_profit": t.take_profit,
+                "pnl": round(pnl, 2),
+                "roe": round(roe, 2),
+                "atr": t.atr_at_entry,
+                "is_trailing": t.is_trailing
+            }
+
+        asset_list.append({
+            "symbol": asset.symbol,
+            "current_price": asset.current_price,
+            "is_in_position": asset.is_in_position,
+            "position_type": position_type,
+            "ai_prediction": asset.latest_prediction,
+            "ai_confidence": asset.latest_confidence,
+            "open_trade": open_trade_info
+        })
 
     return {
         "is_running": True,
-        "active_symbol": bot.symbol,
-        "current_price": bot.current_price,
-        "is_in_position": bot.is_in_position,
-        "position_type": position_type,
-        "ai_prediction": bot.latest_prediction,
-        "ai_confidence": bot.latest_confidence,
+        "global_open_trades": active_count,
+        "max_open_trades": bot.max_open_trades,
         "ai_threshold": bot.ai_threshold,
-        "open_trade": open_trade_info
+        "assets": asset_list
     }
 
 @router.get("/balance", response_model=BalanceResponse)
