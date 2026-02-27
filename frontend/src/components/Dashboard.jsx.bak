@@ -1,21 +1,11 @@
 import { useState, useEffect } from 'react';
 import { getBotStatus, getBalance, getTrades } from '../services/api';
 
-// --- NUEVA FUNCIÓN INTELIGENTE DE FORMATEO ---
-const formatPrice = (value) => {
-  if (!value) return "0.00";
-  const num = parseFloat(value);
-  if (num === 0) return "0";
-  if (num >= 1000) return num.toFixed(2); // Para BTC, ETH
-  if (num >= 1) return num.toFixed(4);    // Para monedas medianas como XRP, SOL
-  return num.toPrecision(5);              // Para Micro-coins como DENT o SHIB
-};
-
 const Dashboard = () => {
   const [status, setStatus] = useState(null);
   const [balance, setBalance] = useState(null);
   const [trades, setTrades] = useState([]);
-  const [lastUpdated, setLastUpdated] = useState(new Date());
+  const[lastUpdated, setLastUpdated] = useState(new Date());
 
   const fetchData = async () => {
     try {
@@ -26,7 +16,7 @@ const Dashboard = () => {
       if (statusData) setStatus(statusData);
       if (balanceData) setBalance(balanceData);
       if (tradesData) setTrades(tradesData);
-
+      
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Error obteniendo datos del servidor", error);
@@ -35,9 +25,9 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3000);
+    const interval = setInterval(fetchData, 3000); // Refresco cada 3 segundos
     return () => clearInterval(interval);
-  }, []);
+  },[]);
 
   if (!status || !status.assets || !balance) {
     return (
@@ -49,12 +39,13 @@ const Dashboard = () => {
     );
   }
 
+  // Separar los activos en dos grupos: Con posición abierta y Solo monitoreo
   const activeAssets = status.assets.filter(a => a.is_in_position);
   const scanningAssets = status.assets.filter(a => !a.is_in_position);
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto min-h-screen">
-
+      
       {/* HEADER & GLOBAL STATUS */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-8 bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-xl">
         <div>
@@ -79,14 +70,14 @@ const Dashboard = () => {
             <div className="text-2xl font-bold text-white flex items-center gap-2">
               <span className={status.global_open_trades >= status.max_open_trades ? 'text-orange-400' : 'text-green-400'}>
                 {status.global_open_trades}
-              </span>
+              </span> 
               <span className="text-gray-500">/ {status.max_open_trades}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ZONA DE COMBATE */}
+      {/* ZONA DE COMBATE: POSICIONES ACTIVAS */}
       <div className="mb-10">
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
           ⚔️ Posiciones Activas ({activeAssets.length})
@@ -101,9 +92,10 @@ const Dashboard = () => {
               const trade = asset.open_trade;
               const isLong = asset.position_type === 'LONG';
               const pnlColor = trade.pnl >= 0 ? 'text-green-400' : 'text-red-400';
-
+              
               return (
                 <div key={asset.symbol} className={`bg-gray-800 rounded-xl border-2 shadow-lg overflow-hidden ${isLong ? 'border-green-900/50' : 'border-red-900/50'}`}>
+                  {/* Card Header */}
                   <div className={`px-6 py-4 flex justify-between items-center ${isLong ? 'bg-green-900/20' : 'bg-red-900/20'}`}>
                     <div className="flex items-center gap-3">
                       <span className={`px-3 py-1 rounded font-bold text-sm ${isLong ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
@@ -115,29 +107,30 @@ const Dashboard = () => {
                       {trade.pnl >= 0 ? '+' : ''}{trade.pnl.toFixed(2)} USDT <span className="text-sm opacity-80">({trade.roe.toFixed(2)}%)</span>
                     </div>
                   </div>
-
+                  
+                  {/* Card Body */}
                   <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <div className="text-xs text-gray-500 uppercase">Precio Actual</div>
-                      <div className="text-lg font-mono text-white">${formatPrice(asset.current_price)}</div>
+                      <div className="text-lg font-mono text-white">${asset.current_price}</div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-500 uppercase">Precio Entrada</div>
-                      <div className="text-lg font-mono text-gray-300">${formatPrice(trade.entry_price)}</div>
+                      <div className="text-lg font-mono text-gray-300">${trade.entry_price}</div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-500 uppercase flex items-center gap-1">
-                        Stop Loss
+                        Stop Loss 
                         {trade.is_trailing && <span title="Trailing Stop Activo" className="text-xs animate-bounce">🚀</span>}
                       </div>
                       <div className={`text-lg font-mono ${trade.is_trailing ? 'text-orange-400 font-bold' : 'text-red-400'}`}>
-                        ${formatPrice(trade.stop_loss)}
+                        ${trade.stop_loss}
                       </div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-500 uppercase">Take Profit</div>
                       <div className="text-lg font-mono text-green-400">
-                        {trade.take_profit > 0 ? `$${formatPrice(trade.take_profit)}` : 'Corriendo 📈'}
+                        {trade.take_profit > 0 ? `$${trade.take_profit}` : 'Corriendo 📈'}
                       </div>
                     </div>
                   </div>
@@ -157,6 +150,7 @@ const Dashboard = () => {
           {scanningAssets.map((asset) => {
             const pred = asset.ai_prediction;
             const conf = asset.ai_confidence;
+            // Estilos dinámicos según la predicción
             let bgColor = "bg-gray-800 border-gray-700";
             let textColor = "text-gray-400";
             if (pred === 'LONG') {
@@ -170,8 +164,8 @@ const Dashboard = () => {
             return (
               <div key={asset.symbol} className={`p-4 rounded-xl border ${bgColor} transition-all duration-300`}>
                 <div className="text-lg font-bold text-white mb-1">{asset.symbol}</div>
-                <div className="text-sm font-mono text-gray-300 mb-3">${formatPrice(asset.current_price)}</div>
-
+                <div className="text-sm font-mono text-gray-300 mb-3">${asset.current_price}</div>
+                
                 <div className="flex justify-between items-end">
                   <div className={`text-sm font-bold ${textColor}`}>
                     {pred}
@@ -180,9 +174,10 @@ const Dashboard = () => {
                     {conf.toFixed(1)}%
                   </div>
                 </div>
-
+                
+                {/* Barra de progreso de confianza */}
                 <div className="w-full bg-gray-900 rounded-full h-1.5 mt-2 overflow-hidden">
-                  <div
+                  <div 
                     className={`h-1.5 rounded-full ${pred === 'LONG' ? 'bg-green-500' : pred === 'SHORT' ? 'bg-red-500' : 'bg-gray-600'}`}
                     style={{ width: `${conf}%` }}
                   ></div>
@@ -193,7 +188,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* HISTORIAL */}
+      {/* HISTORIAL DE TRADES */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-700 bg-gray-900/50">
           <h3 className="text-lg font-bold text-white">📜 Historial de Operaciones</h3>
@@ -222,8 +217,8 @@ const Dashboard = () => {
                     <td className={`px-6 py-4 font-bold text-sm ${trade.side === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
                       {trade.side}
                     </td>
-                    <td className="px-6 py-4 font-mono text-sm">${formatPrice(trade.entry_price)}</td>
-                    <td className="px-6 py-4 font-mono text-sm">{trade.exit_price ? `$${formatPrice(trade.exit_price)}` : '-'}</td>
+                    <td className="px-6 py-4 font-mono text-sm">${trade.entry_price}</td>
+                    <td className="px-6 py-4 font-mono text-sm">{trade.exit_price ? `$${trade.exit_price}` : '-'}</td>
                     <td className={`px-6 py-4 font-mono text-right font-bold ${trade.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                       {trade.realized_pnl ? `${trade.realized_pnl >= 0 ? '+' : ''}${trade.realized_pnl.toFixed(2)}` : '...'}
                     </td>
