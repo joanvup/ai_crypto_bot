@@ -25,6 +25,7 @@ logs/*.log
 ai_engine/saved_models/*.json
 ai_engine/saved_models/*.xgb
 ai_engine/saved_models/*.pkl
+ai_engine/saved_models/*.joblib
 
 # =========================
 # Entornos de Desarrollo (IDEs)
