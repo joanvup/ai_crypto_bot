@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 from database.session import get_db
 from database.models import Trade
 from api.schemas import TradeResponse, BalanceResponse, BotStatus
@@ -83,13 +83,43 @@ async def get_balance():
         "unrealized_pnl": 0.0 # En futuro real se calcula con posiciones abiertas
     }
 
-@router.get("/trades", response_model=list[TradeResponse])
-async def get_trades(limit: int = 10, db: AsyncSession = Depends(get_db)):
-    """Obtiene el historial de trades cerrados desde la base de datos."""
+@router.get("/trades", response_model=PaginatedTradesResponse)
+async def get_trades(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=100),
+    filter_date: str = None, # Espera formato YYYY-MM-DD
+    db: AsyncSession = Depends(get_db)
+):
+    """Obtiene el historial paginado y filtrado por fecha."""
     try:
-        query = select(Trade).order_by(desc(Trade.entry_time)).limit(limit)
+        query = select(Trade).where(Trade.status == 'CLOSED') # Solo mostrar cerrados en el historial
+        
+        # 1. Aplicar filtro de fecha si el usuario seleccionó un día
+        if filter_date:
+            target_date = datetime.strptime(filter_date, "%Y-%m-%d").date()
+            # Convertimos el timestamp de la BD a fecha para compararlo
+            query = query.where(func.date(Trade.entry_time) == target_date)
+            
+        # 2. Contar el total de registros (para saber cuántas páginas hay)
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await db.execute(count_query)
+        total = total_result.scalar() or 0
+        
+        # 3. Aplicar paginación
+        offset = (page - 1) * per_page
+        query = query.order_by(desc(Trade.entry_time)).offset(offset).limit(per_page)
+        
         result = await db.execute(query)
         trades = result.scalars().all()
-        return trades
+        
+        # 4. Calcular total de páginas
+        total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+        
+        return {
+            "data": trades,
+            "total": total,
+            "page": page,
+            "total_pages": total_pages
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

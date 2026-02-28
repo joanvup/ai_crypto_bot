@@ -9,14 +9,21 @@ class TradeResponse(BaseModel):
     entry_price: float
     exit_price: Optional[float] = None
     quantity: float
-    pnl: Optional[float] = None
-    roe: Optional[float] = None
+    realized_pnl: Optional[float] = None  # Antes decía pnl
+    roe_percent: Optional[float] = None   # Antes decía roe
     status: str
     entry_time: datetime
     exit_time: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+# --- NUEVA CLASE PARA PAGINACIÓN ---
+class PaginatedTradesResponse(BaseModel):
+    data: List[TradeResponse]
+    total: int
+    page: int
+    total_pages: int
 
 class BalanceResponse(BaseModel):
     total_balance: float

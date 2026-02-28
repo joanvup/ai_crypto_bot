@@ -1,50 +1,55 @@
 import { useState, useEffect } from 'react';
 import { getBotStatus, getBalance, getTrades } from '../services/api';
 
-// --- NUEVA FUNCIÓN INTELIGENTE DE FORMATEO ---
 const formatPrice = (value) => {
   if (!value) return "0.00";
   const num = parseFloat(value);
   if (num === 0) return "0";
-  if (num >= 1000) return num.toFixed(2); // Para BTC, ETH
-  if (num >= 1) return num.toFixed(4);    // Para monedas medianas como XRP, SOL
-  return num.toPrecision(5);              // Para Micro-coins como DENT o SHIB
+  if (num >= 1000) return num.toFixed(2);
+  if (num >= 1) return num.toFixed(4);
+  return num.toPrecision(5);
 };
 
 const Dashboard = () => {
   const [status, setStatus] = useState(null);
   const [balance, setBalance] = useState(null);
-  const [trades, setTrades] = useState([]);
+
+  // --- NUEVOS ESTADOS PARA PAGINACIÓN Y FILTRO ---
+  const [tradesInfo, setTradesInfo] = useState({ data: [], total: 0, page: 1, total_pages: 1 });
+  const [tradePage, setTradePage] = useState(1);
+  const [tradeDate, setTradeDate] = useState('');
+
   const [lastUpdated, setLastUpdated] = useState(new Date());
 
   const fetchData = async () => {
     try {
       const statusData = await getBotStatus();
       const balanceData = await getBalance();
-      const tradesData = await getTrades();
+      // Pasamos la página actual y la fecha al backend
+      const tradesData = await getTrades(tradePage, 10, tradeDate);
 
       if (statusData) setStatus(statusData);
       if (balanceData) setBalance(balanceData);
-      if (tradesData) setTrades(tradesData);
+      if (tradesData && tradesData.data) setTradesInfo(tradesData);
 
       setLastUpdated(new Date());
     } catch (error) {
-      console.error("Error obteniendo datos del servidor", error);
+      console.error("Error obteniendo datos", error);
     }
   };
 
+  // Dependencias actualizadas: Si cambias de página o fecha, se refesca automáticamente
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [tradePage, tradeDate]);
 
   if (!status || !status.assets || !balance) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white">
         <div className="text-4xl animate-pulse mb-4">🤖</div>
         <div className="text-xl text-gray-400 font-mono">Cargando Terminal Multi-Activo...</div>
-        <div className="text-sm text-gray-600 mt-2">Sincronizando IA con Binance Futuros</div>
       </div>
     );
   }
@@ -55,7 +60,7 @@ const Dashboard = () => {
   return (
     <div className="p-6 max-w-[1400px] mx-auto min-h-screen">
 
-      {/* HEADER & GLOBAL STATUS */}
+      {/* HEADER & GLOBAL STATUS (Se mantiene igual) */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-8 bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-xl">
         <div>
           <h1 className="text-3xl font-bold text-blue-400 flex items-center gap-3">
@@ -86,7 +91,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* ZONA DE COMBATE */}
+      {/* ZONA DE COMBATE (Se mantiene igual) */}
       <div className="mb-10">
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
           ⚔️ Posiciones Activas ({activeAssets.length})
@@ -148,7 +153,7 @@ const Dashboard = () => {
         )}
       </div>
 
-      {/* RADAR DE INTELIGENCIA ARTIFICIAL */}
+      {/* RADAR DE INTELIGENCIA ARTIFICIAL (Se mantiene igual) */}
       <div className="mb-10">
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
           📡 Radar IA - Monitoreo en Tiempo Real (Umbral: {status.ai_threshold}%)
@@ -171,21 +176,14 @@ const Dashboard = () => {
               <div key={asset.symbol} className={`p-4 rounded-xl border ${bgColor} transition-all duration-300`}>
                 <div className="text-lg font-bold text-white mb-1">{asset.symbol}</div>
                 <div className="text-sm font-mono text-gray-300 mb-3">${formatPrice(asset.current_price)}</div>
-
                 <div className="flex justify-between items-end">
-                  <div className={`text-sm font-bold ${textColor}`}>
-                    {pred}
-                  </div>
+                  <div className={`text-sm font-bold ${textColor}`}>{pred}</div>
                   <div className={`text-xs font-mono px-2 py-1 rounded bg-gray-900 ${conf >= status.ai_threshold ? 'text-white border border-gray-600' : 'text-gray-500'}`}>
                     {conf.toFixed(1)}%
                   </div>
                 </div>
-
                 <div className="w-full bg-gray-900 rounded-full h-1.5 mt-2 overflow-hidden">
-                  <div
-                    className={`h-1.5 rounded-full ${pred === 'LONG' ? 'bg-green-500' : pred === 'SHORT' ? 'bg-red-500' : 'bg-gray-600'}`}
-                    style={{ width: `${conf}%` }}
-                  ></div>
+                  <div className={`h-1.5 rounded-full ${pred === 'LONG' ? 'bg-green-500' : pred === 'SHORT' ? 'bg-red-500' : 'bg-gray-600'}`} style={{ width: `${conf}%` }}></div>
                 </div>
               </div>
             );
@@ -193,16 +191,38 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* HISTORIAL */}
-      <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-700 bg-gray-900/50">
-          <h3 className="text-lg font-bold text-white">📜 Historial de Operaciones</h3>
+      {/* HISTORIAL PAGINADO CON FILTRO */}
+      <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden shadow-lg">
+
+        {/* Encabezado con Calendario */}
+        <div className="px-6 py-4 border-b border-gray-700 bg-gray-900/50 flex flex-col md:flex-row justify-between items-center gap-4">
+          <h3 className="text-lg font-bold text-white">📜 Historial de Operaciones Cerradas</h3>
+
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-400">Filtrar Día:</span>
+            <input
+              type="date"
+              value={tradeDate}
+              onChange={(e) => { setTradeDate(e.target.value); setTradePage(1); }}
+              className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+            />
+            {tradeDate && (
+              <button
+                onClick={() => { setTradeDate(''); setTradePage(1); }}
+                className="text-xs text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-900/20 rounded border border-red-900/50"
+              >
+                ✕ Limpiar
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Tabla */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-gray-400">
             <thead className="bg-gray-900/80 uppercase text-xs font-semibold text-gray-500">
               <tr>
-                <th className="px-6 py-4">Fecha/Hora</th>
+                <th className="px-6 py-4">Fecha/Hora (Entrada)</th>
                 <th className="px-6 py-4">Símbolo</th>
                 <th className="px-6 py-4">Tipo</th>
                 <th className="px-6 py-4">Entrada</th>
@@ -212,10 +232,10 @@ const Dashboard = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
-              {trades.length === 0 ? (
-                <tr><td colSpan="7" className="text-center py-8 text-gray-500">No hay operaciones registradas aún.</td></tr>
+              {tradesInfo.data.length === 0 ? (
+                <tr><td colSpan="7" className="text-center py-8 text-gray-500">No hay operaciones para mostrar.</td></tr>
               ) : (
-                trades.map((trade) => (
+                tradesInfo.data.map((trade) => (
                   <tr key={trade.id} className="hover:bg-gray-700/30 transition-colors">
                     <td className="px-6 py-4 text-sm">{new Date(trade.entry_time).toLocaleString()}</td>
                     <td className="px-6 py-4 font-bold text-white">{trade.symbol}</td>
@@ -225,10 +245,10 @@ const Dashboard = () => {
                     <td className="px-6 py-4 font-mono text-sm">${formatPrice(trade.entry_price)}</td>
                     <td className="px-6 py-4 font-mono text-sm">{trade.exit_price ? `$${formatPrice(trade.exit_price)}` : '-'}</td>
                     <td className={`px-6 py-4 font-mono text-right font-bold ${trade.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {trade.realized_pnl ? `${trade.realized_pnl >= 0 ? '+' : ''}${trade.realized_pnl.toFixed(2)}` : '...'}
+                      {trade.realized_pnl != null ? `${trade.realized_pnl >= 0 ? '+' : ''}${trade.realized_pnl.toFixed(2)}` : '...'}
                     </td>
                     <td className={`px-6 py-4 font-mono text-right ${trade.roe_percent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {trade.roe_percent ? `${trade.roe_percent >= 0 ? '+' : ''}${trade.roe_percent.toFixed(2)}%` : '-'}
+                      {trade.roe_percent != null ? `${trade.roe_percent >= 0 ? '+' : ''}${trade.roe_percent.toFixed(2)}%` : '-'}
                     </td>
                   </tr>
                 ))
@@ -236,6 +256,35 @@ const Dashboard = () => {
             </tbody>
           </table>
         </div>
+
+        {/* Controles de Paginación */}
+        {tradesInfo.total_pages > 0 && (
+          <div className="px-6 py-4 border-t border-gray-700 bg-gray-900/50 flex justify-between items-center">
+            <span className="text-sm text-gray-400">
+              Total operaciones: <span className="font-bold text-white">{tradesInfo.total}</span>
+            </span>
+            <div className="flex gap-2 items-center">
+              <button
+                disabled={tradePage === 1}
+                onClick={() => setTradePage(p => p - 1)}
+                className="px-4 py-1.5 bg-gray-700 text-white font-bold rounded disabled:opacity-30 hover:bg-blue-600 transition-colors text-sm"
+              >
+                ◀ Ant
+              </button>
+              <span className="text-sm text-gray-300 px-3 py-1 font-mono">
+                Pág {tradesInfo.page} de {tradesInfo.total_pages}
+              </span>
+              <button
+                disabled={tradePage === tradesInfo.total_pages}
+                onClick={() => setTradePage(p => p + 1)}
+                className="px-4 py-1.5 bg-gray-700 text-white font-bold rounded disabled:opacity-30 hover:bg-blue-600 transition-colors text-sm"
+              >
+                Sig ▶
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

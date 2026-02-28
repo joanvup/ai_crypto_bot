@@ -22,12 +22,16 @@ export const getBalance = async () => {
     }
 };
 
-export const getTrades = async () => {
+export const getTrades = async (page = 1, limit = 10, dateFilter = '') => {
     try {
-        const response = await axios.get(`${API_URL}/trades`);
-        return response.data;
+        let url = `${API_URL}/trades?page=${page}&per_page=${limit}`;
+        if (dateFilter) {
+            url += `&filter_date=${dateFilter}`;
+        }
+        const response = await axios.get(url);
+        return response.data; // Devuelve el objeto paginado: { data, total, page, total_pages }
     } catch (error) {
         console.error("Error fetching trades:", error);
-        return [];
+        return { data: [], total: 0, page: 1, total_pages: 1 };
     }
 };
