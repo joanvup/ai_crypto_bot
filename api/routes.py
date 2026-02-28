@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from database.session import get_db
 from database.models import Trade
-from api.schemas import TradeResponse, BalanceResponse, BotStatus
+from api.schemas import TradeResponse, BalanceResponse, BotStatus, PaginatedTradesResponse
 
 router = APIRouter()
 
