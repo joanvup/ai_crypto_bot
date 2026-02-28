@@ -68,4 +68,4 @@ if __name__ == "__main__":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         
     # Iniciar servidor
-    uvicorn.run("main:app", host="0.0.0.0", port=8006, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8006, reload=False)
