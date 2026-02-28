@@ -10,7 +10,6 @@ const formatPrice = (value) => {
   return num.toPrecision(5);
 };
 
-
 const Dashboard = () => {
   const [status, setStatus] = useState(null);
   const [balance, setBalance] = useState(null);
