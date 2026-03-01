@@ -1,3 +1,5 @@
+
+from sqlalchemy import select, func
 import os
 import asyncio
 from datetime import datetime, timezone
@@ -101,6 +103,26 @@ class BotCore:
             print(f"\n🚨 ERROR FATAL EN EL NÚCLEO DEL BOT 🚨")
             traceback.print_exc()
 
+    async def get_current_balance(self):
+        """
+        Obtiene el balance real de Binance, o calcula el balance virtual en Dry Run
+        sumando el PNL histórico de la Base de Datos al balance inicial.
+        """
+        if self.client.environment == 'dry_run':
+            initial_balance = float(os.getenv("DRY_RUN_INITIAL_BALANCE", "1000.0"))
+            
+            # Sumar todo el PNL de los trades cerrados
+            async with AsyncSessionLocal() as session:
+                query = select(func.sum(Trade.realized_pnl)).where(Trade.status == 'CLOSED')
+                result = await session.execute(query)
+                accumulated_pnl = result.scalar() or 0.0
+                
+                current = initial_balance + accumulated_pnl
+                return {"total": current, "free": current}
+        else:
+            # En Testnet o Live, consultamos directamente al exchange
+            return await self.client.get_balance()
+
     async def _prepare_ai(self, symbol: str) -> bool:
         asset = self.assets[symbol]
         print(f"   ➤ Descargando historial para {symbol}...")
@@ -163,7 +185,7 @@ class BotCore:
             asset.trade_in_progress = True
 
         try:
-            balance_info = await self.client.get_balance()
+            balance_info = await self.get_current_balance()
             balance = float(balance_info['total']) if balance_info else 1000.0
             
             theoretical_price = float(df['close'].iloc[-1])

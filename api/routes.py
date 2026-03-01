@@ -70,9 +70,11 @@ async def get_status():
 
 @router.get("/balance", response_model=BalanceResponse)
 async def get_balance():
-    """Consulta el balance directamente a Binance a través del cliente del bot."""
+    """Consulta el balance calculando el PNL en Dry Run o consultando a Binance en Real."""
     bot = get_bot_status()
-    balance = await bot.client.get_balance()
+    
+    # --- CAMBIO: Llama a get_current_balance() en lugar de client.get_balance() ---
+    balance = await bot.get_current_balance()
     
     if not balance:
         return {"total_balance": 0.0, "available_balance": 0.0, "unrealized_pnl": 0.0}
@@ -80,7 +82,7 @@ async def get_balance():
     return {
         "total_balance": balance.get('total', 0.0),
         "available_balance": balance.get('free', 0.0),
-        "unrealized_pnl": 0.0 # En futuro real se calcula con posiciones abiertas
+        "unrealized_pnl": 0.0 # Opcional: Futura implementación de PNL no realizado
     }
 
 @router.get("/trades", response_model=PaginatedTradesResponse)
