@@ -56,3 +56,10 @@ class BotStatus(BaseModel):
     max_open_trades: int
     ai_threshold: float
     assets: list[AssetStatus] # Ahora es una lista de todos los activos escaneados
+
+class BalanceHistoryResponse(BaseModel):
+    timestamp: datetime
+    total_balance: float
+
+    class Config:
+        from_attributes = True

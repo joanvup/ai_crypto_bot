@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from database.session import get_db
-from database.models import Trade
-from api.schemas import TradeResponse, BalanceResponse, BotStatus, PaginatedTradesResponse
+from database.models import Trade, BalanceHistory
+from api.schemas import TradeResponse, BalanceResponse, BotStatus, PaginatedTradesResponse, BalanceHistoryResponse
 
 router = APIRouter()
 
@@ -123,5 +123,19 @@ async def get_trades(
             "page": page,
             "total_pages": total_pages
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/balance-history", response_model=list[BalanceHistoryResponse])
+async def get_balance_history(db: AsyncSession = Depends(get_db)):
+    """Obtiene los últimos 100 registros de balance para dibujar la gráfica."""
+    try:
+        # Obtenemos los más recientes primero para limitar a 100
+        query = select(BalanceHistory).order_by(desc(BalanceHistory.timestamp)).limit(100)
+        result = await db.execute(query)
+        records = result.scalars().all()
+        
+        # Invertimos la lista para que la gráfica vaya de izquierda (viejo) a derecha (nuevo)
+        return list(reversed(records))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

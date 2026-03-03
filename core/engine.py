@@ -4,7 +4,7 @@ import os
 import asyncio
 from datetime import datetime, timezone
 from database.session import AsyncSessionLocal
-from database.models import Trade, TradeSLHistory
+from database.models import Trade, TradeSLHistory, BalanceHistory
 from connectors.binance_futures import BinanceFuturesClient
 from connectors.binance_ws import BinanceWebSocket
 from connectors.market_scanner import MarketScanner
@@ -89,7 +89,9 @@ class BotCore:
             print("\n✅ Todas las IAs listas. Desplegando redes de monitoreo...")
 
             # 3. Arrancar bucles concurrentes (Un WS y un Strategy por cada activo)
-            tasks =[]
+            tasks =[
+                asyncio.create_task(self._balance_snapshot_loop()) # <--- AÑADE ESTA LÍNEA AQUÍ
+            ]
             for sym in self.assets.keys():
                 asset = self.assets[sym]
                 # Bucle de Precios
@@ -324,3 +326,24 @@ class BotCore:
                 await session.commit()
                 asset.is_in_position = False
                 asset.current_trade = None
+    
+    async def _balance_snapshot_loop(self):
+        """Toma una foto del balance cada 15 minutos para la gráfica del Dashboard."""
+        print("📸 Snapshot de balance iniciado (Guardando histórico cada 15 min).")
+        while True:
+            try:
+                balance_info = await self.get_current_balance()
+                if balance_info:
+                    async with AsyncSessionLocal() as session:
+                        snapshot = BalanceHistory(
+                            total_balance=float(balance_info['total']),
+                            available_balance=float(balance_info['free']),
+                            unrealized_pnl=0.0,
+                            timestamp=datetime.utcnow()
+                        )
+                        session.add(snapshot)
+                        await session.commit()
+            except Exception as e:
+                print(f"❌ Error guardando snapshot de balance: {e}")
+            
+            await asyncio.sleep(900) # 900 segundos = 15 minutos
