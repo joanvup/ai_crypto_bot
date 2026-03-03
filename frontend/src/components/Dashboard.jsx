@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getBotStatus, getBalance, getTrades } from '../services/api';
+import { getBotStatus, getBalance, getTrades, getBalanceHistory } from '../services/api';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const formatPrice = (value) => {
   if (!value) return "0.00";
@@ -27,11 +28,20 @@ const Dashboard = () => {
       const balanceData = await getBalance();
       // Pasamos la página actual y la fecha al backend
       const tradesData = await getTrades(tradePage, 10, tradeDate);
+      const chartData = await getBalanceHistory();
 
       if (statusData) setStatus(statusData);
       if (balanceData) setBalance(balanceData);
       if (tradesData && tradesData.data) setTradesInfo(tradesData);
 
+      // Formatear la fecha para la gráfica
+      if (chartData) {
+        const formattedChart = chartData.map(item => ({
+          ...item,
+          time: new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }));
+        setBalanceHistory(formattedChart);
+      }
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Error obteniendo datos", error);
@@ -90,7 +100,41 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
-
+      {/* GRÁFICA DE RENDIMIENTO (EQUITY CURVE) */}
+      <div className="mb-10 bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
+        <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+          📈 Curva de Rendimiento (Equity)
+        </h2>
+        <div className="h-64 w-full">
+          {balanceHistory.length < 2 ? (
+            <div className="flex h-full items-center justify-center text-gray-500 font-mono text-sm border border-dashed border-gray-600 rounded-lg">
+              Recopilando datos históricos del balance (Requiere al menos 2 snapshots)...
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={balanceHistory} margin={{ top: 5, right: 0, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+                <XAxis dataKey="time" stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} />
+                {/* domain={['auto', 'auto']} hace que la gráfica haga "zoom" automático si ganas $5 o $500 */}
+                <YAxis domain={['auto', 'auto']} stroke="#9ca3af" fontSize={12} tickFormatter={(val) => `$${val}`} width={80} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#fff', borderRadius: '0.5rem' }}
+                  itemStyle={{ color: '#60a5fa', fontWeight: 'bold' }}
+                  formatter={(value) => [`$${value.toFixed(2)}`, 'Balance']}
+                  labelStyle={{ color: '#9ca3af', marginBottom: '0.5rem' }}
+                />
+                <Area type="monotone" dataKey="total_balance" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorBalance)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
       {/* ZONA DE COMBATE (Se mantiene igual) */}
       <div className="mb-10">
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">

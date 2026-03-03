@@ -35,3 +35,13 @@ export const getTrades = async (page = 1, limit = 10, dateFilter = '') => {
         return { data: [], total: 0, page: 1, total_pages: 1 };
     }
 };
+
+export const getBalanceHistory = async () => {
+    try {
+        const response = await axios.get(`${API_URL}/balance-history`);
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching balance history:", error);
+        return [];
+    }
+};
