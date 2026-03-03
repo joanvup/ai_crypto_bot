@@ -58,6 +58,7 @@ class BotCore:
         # Estado Global Multi-Activo
         self.assets = {} # Diccionario: {'BTC/USDT': AssetState, 'ETH/USDT': AssetState...}
         self.trade_lock = asyncio.Lock() # Bloqueo global para no superar el límite de trades
+        self.recovered_trades = {} # <--- NUEVO: Memoria temporal de rescate
 
     async def start(self):
         try:
@@ -71,32 +72,47 @@ class BotCore:
                 await self.client.exchange.load_time_difference()
             except Exception as e:
                 print(f"⚠️ Aviso de sincronización: {e}")
+
+            # --- 1. RECUPERAR ESTADO ANTES DE HACER NADA ---
+            await self._recover_state()
             
-            # 1. Escanear el Mercado
+            # --- 2. ESCANEAR MERCADO ---
             top_symbols = await self.scanner.get_top_assets(limit=self.max_monitored_assets)
             if not top_symbols:
                 print("🛑 No se pudieron obtener activos del escáner.")
                 return
 
-            # 2. Inicializar Estado y Entrenar IA para CADA ACTIVO
+            # --- 3. ANCLAR SÍMBOLOS RECUPERADOS AL RADAR ---
+            # Si recuperamos un trade en 'DOGE' pero hoy no está en el Top 10, lo obligamos a entrar
+            # para que el bot siga monitoreando su Stop Loss y Trailing.
+            for sym in self.recovered_trades.keys():
+                if sym not in top_symbols:
+                    top_symbols.append(sym)
+                    print(f"   ⚓ Anclando {sym} al escáner por recuperación de trade activo.")
+
+            # --- 4. ENTRENAR IA E INYECTAR MEMORIA ---
             print("\n🧠 Iniciando fase de Entrenamiento Masivo (Esto puede tomar varios minutos)...")
             for sym in top_symbols:
                 self.assets[sym] = AssetState(sym, self.timeframe)
+                
+                # INYECTAR TRADE RECUPERADO
+                if sym in self.recovered_trades:
+                    self.assets[sym].is_in_position = True
+                    self.assets[sym].current_trade = self.recovered_trades[sym]
+                
                 success = await self._prepare_ai(sym)
                 if not success:
                     print(f"⚠️ {sym} omitido por falta de datos.")
             
             print("\n✅ Todas las IAs listas. Desplegando redes de monitoreo...")
 
-            # 3. Arrancar bucles concurrentes (Un WS y un Strategy por cada activo)
+            # --- 5. ARRANCAR BUCLES CONCURRENTES ---
             tasks =[
-                asyncio.create_task(self._balance_snapshot_loop()) # <--- AÑADE ESTA LÍNEA AQUÍ
+                asyncio.create_task(self._balance_snapshot_loop())
             ]
             for sym in self.assets.keys():
                 asset = self.assets[sym]
-                # Bucle de Precios
                 tasks.append(asyncio.create_task(self.ws.subscribe_ticker(asset.ws_symbol, lambda s, p, sym=sym: self._on_price_update(sym, p))))
-                # Bucle de Estrategia
                 tasks.append(asyncio.create_task(self._strategy_loop(sym)))
             
             await asyncio.gather(*tasks)
@@ -104,6 +120,57 @@ class BotCore:
         except Exception as e:
             print(f"\n🚨 ERROR FATAL EN EL NÚCLEO DEL BOT 🚨")
             traceback.print_exc()
+
+    async def _recover_state(self):
+        """
+        Lee la BD buscando trades 'OPEN' y los concilia con la realidad (Binance).
+        """
+        print("\n🔄 Iniciando Módulo de Recuperación de Estado...")
+        async with AsyncSessionLocal() as session:
+            # Buscar operaciones que quedaron marcadas como OPEN cuando el bot se apagó
+            query = select(Trade).where(Trade.status == 'OPEN')
+            result = await session.execute(query)
+            open_trades = result.scalars().all()
+
+            if not open_trades:
+                print("   ✅ No hay operaciones huérfanas en BD. Estado limpio.")
+                return
+
+            print(f"   🔎 Encontradas {len(open_trades)} operaciones OPEN en Base de Datos.")
+
+            # Obtener realidad de Binance (Si estamos en Live/Testnet)
+            live_positions = await self.client.get_open_positions()
+
+            for trade in open_trades:
+                sym = trade.symbol
+                is_alive = False
+
+                if self.client.environment == 'dry_run':
+                    # En Dry Run confiamos ciegamente en la BD. El Soft Stop se encargará 
+                    # de cerrar si el precio ya pasó el SL al conectar el WebSocket.
+                    is_alive = True
+                else:
+                    if sym in live_positions:
+                        is_alive = True
+                    else:
+                        # Estaba en la BD, pero Binance ya la cerró (Tocó SL/TP offline)
+                        print(f"   ⚠️ Posición {sym} ya no existe en Binance (Cerrada mientras estaba offline).")
+                        trade.status = 'CLOSED'
+                        trade.exit_time = datetime.utcnow()
+                        # Usamos el Stop Loss como precio de salida aproximado para limpiar la BD
+                        trade.exit_price = trade.stop_loss 
+                        
+                        is_long = trade.side == 'LONG'
+                        pnl = (trade.exit_price - trade.entry_price) * trade.quantity if is_long else (trade.entry_price - trade.exit_price) * trade.quantity
+                        trade.realized_pnl = round(pnl, 2)
+                        trade.roe_percent = round((pnl / (trade.entry_price * trade.quantity)) * 100, 2)
+
+                if is_alive:
+                    print(f"   ✅ Restaurando {sym} en memoria (Entrada: ${trade.entry_price})...")
+                    session.expunge(trade) # Desvincula el objeto de esta sesión para usarlo globalmente
+                    self.recovered_trades[sym] = trade
+
+            await session.commit()
 
     async def get_current_balance(self):
         """

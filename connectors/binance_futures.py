@@ -139,6 +139,30 @@ class BinanceFuturesClient:
             })
         except: return False
 
+    async def get_open_positions(self) -> list:
+        """
+        Consulta directamente a Binance qué posiciones reales están abiertas.
+        Devuelve una lista limpia de símbolos (Ej: ['BTC/USDT', 'ETH/USDT']).
+        """
+        if self.environment == 'dry_run':
+            return[] # En dry_run, Binance no sabe nada de nuestras posiciones
+            
+        try:
+            positions = await self.exchange.fetch_positions()
+            active_symbols =[]
+            
+            for p in positions:
+                # CCXT guarda el tamaño de la posición en 'contracts'
+                if float(p.get('contracts', 0)) > 0:
+                    # CCXT devuelve 'BTC/USDT:USDT', lo limpiamos a 'BTC/USDT'
+                    clean_symbol = p['symbol'].split(':')[0]
+                    active_symbols.append(clean_symbol)
+                    
+            return active_symbols
+        except Exception as e:
+            print(f"❌ Error consultando posiciones vivas en Binance: {e}")
+            return[]
+    
     async def close_connection(self):
         await self.exchange.close()
 
