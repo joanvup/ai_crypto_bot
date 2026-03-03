@@ -59,6 +59,7 @@ class BotCore:
         self.assets = {} # Diccionario: {'BTC/USDT': AssetState, 'ETH/USDT': AssetState...}
         self.trade_lock = asyncio.Lock() # Bloqueo global para no superar el límite de trades
         self.recovered_trades = {} # <--- NUEVO: Memoria temporal de rescate
+        self.is_ready = False  # <--- NUEVO: Candado físico
 
     async def start(self):
         try:
@@ -104,6 +105,9 @@ class BotCore:
                 if not success:
                     print(f"⚠️ {sym} omitido por falta de datos.")
             
+            # --- NUEVO: LIBERACIÓN DEL CANDADO ---
+            print("\n🔓 Todo el estado ha sido validado. Quitanto candado de seguridad.")
+            self.is_ready = True
             print("\n✅ Todas las IAs listas. Desplegando redes de monitoreo...")
 
             # --- 5. ARRANCAR BUCLES CONCURRENTES ---
@@ -221,6 +225,10 @@ class BotCore:
         asset = self.assets[symbol]
         while True:
             try:
+                # --- NUEVO: SI EL CANDADO ESTÁ PUESTO, NO HACER NADA ---
+                if not self.is_ready:
+                    await asyncio.sleep(1)
+                    continue
                 if not asset.is_in_position:
                     klines = await self.client.get_historical_klines(symbol, self.timeframe, limit=200)
                     if klines:
