@@ -6,54 +6,57 @@ const formatPrice = (value) => {
   if (!value) return "0.00";
   const num = parseFloat(value);
   if (num === 0) return "0";
-  if (num >= 1000) return num.toFixed(2);
-  if (num >= 1) return num.toFixed(4);
-  return num.toPrecision(5);
+  if (num >= 1000) return num.toFixed(2); 
+  if (num >= 1) return num.toFixed(4);    
+  return num.toPrecision(5);              
 };
 
 const Dashboard = () => {
-  const [status, setStatus] = useState(null);
+  // --- ESTADOS GLOBALES ---
+  const[status, setStatus] = useState(null);
   const [balance, setBalance] = useState(null);
-
-  // --- NUEVOS ESTADOS PARA PAGINACIÓN Y FILTRO ---
-  const [tradesInfo, setTradesInfo] = useState({ data: [], total: 0, page: 1, total_pages: 1 });
+  
+  // --- ESTADOS DE LA GRÁFICA ---
+  const [balanceHistory, setBalanceHistory] = useState([]); // <--- ESTO ES LO QUE FALTABA
+  
+  // --- ESTADOS DEL HISTORIAL Y PAGINACIÓN ---
+  const [tradesInfo, setTradesInfo] = useState({ data:[], total: 0, page: 1, total_pages: 1 });
   const [tradePage, setTradePage] = useState(1);
   const [tradeDate, setTradeDate] = useState('');
-
-  const [lastUpdated, setLastUpdated] = useState(new Date());
+  
+  const[lastUpdated, setLastUpdated] = useState(new Date());
 
   const fetchData = async () => {
     try {
       const statusData = await getBotStatus();
       const balanceData = await getBalance();
-      // Pasamos la página actual y la fecha al backend
       const tradesData = await getTrades(tradePage, 10, tradeDate);
       const chartData = await getBalanceHistory();
 
       if (statusData) setStatus(statusData);
       if (balanceData) setBalance(balanceData);
       if (tradesData && tradesData.data) setTradesInfo(tradesData);
-
-      // Formatear la fecha para la gráfica
-      if (chartData) {
+      
+      // Formateo de datos para la gráfica
+      if (chartData && Array.isArray(chartData)) {
         const formattedChart = chartData.map(item => ({
           ...item,
-          time: new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          time: new Date(item.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
         }));
         setBalanceHistory(formattedChart);
       }
+      
       setLastUpdated(new Date());
     } catch (error) {
-      console.error("Error obteniendo datos", error);
+      console.error("Error obteniendo datos del servidor", error);
     }
   };
 
-  // Dependencias actualizadas: Si cambias de página o fecha, se refesca automáticamente
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 3000);
     return () => clearInterval(interval);
-  }, [tradePage, tradeDate]);
+  },[tradePage, tradeDate]);
 
   if (!status || !status.assets || !balance) {
     return (
@@ -68,9 +71,9 @@ const Dashboard = () => {
   const scanningAssets = status.assets.filter(a => !a.is_in_position);
 
   return (
-    <div className="p-6 max-w-[1400px] mx-auto min-h-screen">
-
-      {/* HEADER & GLOBAL STATUS (Se mantiene igual) */}
+    <div className="p-6 max-w-[1400px] mx-auto min-h-screen bg-gray-900 text-white">
+      
+      {/* HEADER & GLOBAL STATUS */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-8 bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-xl">
         <div>
           <h1 className="text-3xl font-bold text-blue-400 flex items-center gap-3">
@@ -94,12 +97,13 @@ const Dashboard = () => {
             <div className="text-2xl font-bold text-white flex items-center gap-2">
               <span className={status.global_open_trades >= status.max_open_trades ? 'text-orange-400' : 'text-green-400'}>
                 {status.global_open_trades}
-              </span>
+              </span> 
               <span className="text-gray-500">/ {status.max_open_trades}</span>
             </div>
           </div>
         </div>
       </div>
+
       {/* GRÁFICA DE RENDIMIENTO (EQUITY CURVE) */}
       <div className="mb-10 bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
         <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
@@ -108,25 +112,24 @@ const Dashboard = () => {
         <div className="h-64 w-full">
           {balanceHistory.length < 2 ? (
             <div className="flex h-full items-center justify-center text-gray-500 font-mono text-sm border border-dashed border-gray-600 rounded-lg">
-              Recopilando datos históricos del balance (Requiere al menos 2 snapshots)...
+              Recopilando datos históricos del balance (Requiere al menos 2 snapshots de 15 min)...
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={balanceHistory} margin={{ top: 5, right: 0, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                 <XAxis dataKey="time" stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} />
-                {/* domain={['auto', 'auto']} hace que la gráfica haga "zoom" automático si ganas $5 o $500 */}
-                <YAxis domain={['auto', 'auto']} stroke="#9ca3af" fontSize={12} tickFormatter={(val) => `$${val}`} width={80} tickLine={false} axisLine={false} />
-                <Tooltip
+                <YAxis domain={['auto', 'auto']} stroke="#9ca3af" fontSize={12} tickFormatter={(val) => `$${val}`} width={80} tickLine={false} axisLine={false}/>
+                <Tooltip 
                   contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#fff', borderRadius: '0.5rem' }}
                   itemStyle={{ color: '#60a5fa', fontWeight: 'bold' }}
-                  formatter={(value) => [`$${value.toFixed(2)}`, 'Balance']}
+                  formatter={(value) =>[`$${value.toFixed(2)}`, 'Balance']}
                   labelStyle={{ color: '#9ca3af', marginBottom: '0.5rem' }}
                 />
                 <Area type="monotone" dataKey="total_balance" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorBalance)" />
@@ -135,7 +138,8 @@ const Dashboard = () => {
           )}
         </div>
       </div>
-      {/* ZONA DE COMBATE (Se mantiene igual) */}
+
+      {/* ZONA DE COMBATE */}
       <div className="mb-10">
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
           ⚔️ Posiciones Activas ({activeAssets.length})
@@ -150,7 +154,7 @@ const Dashboard = () => {
               const trade = asset.open_trade;
               const isLong = asset.position_type === 'LONG';
               const pnlColor = trade.pnl >= 0 ? 'text-green-400' : 'text-red-400';
-
+              
               return (
                 <div key={asset.symbol} className={`bg-gray-800 rounded-xl border-2 shadow-lg overflow-hidden ${isLong ? 'border-green-900/50' : 'border-red-900/50'}`}>
                   <div className={`px-6 py-4 flex justify-between items-center ${isLong ? 'bg-green-900/20' : 'bg-red-900/20'}`}>
@@ -164,7 +168,6 @@ const Dashboard = () => {
                       {trade.pnl >= 0 ? '+' : ''}{trade.pnl.toFixed(2)} USDT <span className="text-sm opacity-80">({trade.roe.toFixed(2)}%)</span>
                     </div>
                   </div>
-
                   <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <div className="text-xs text-gray-500 uppercase">Precio Actual</div>
@@ -176,8 +179,7 @@ const Dashboard = () => {
                     </div>
                     <div>
                       <div className="text-xs text-gray-500 uppercase flex items-center gap-1">
-                        Stop Loss
-                        {trade.is_trailing && <span title="Trailing Stop Activo" className="text-xs animate-bounce">🚀</span>}
+                        Stop Loss {trade.is_trailing && <span title="Trailing Stop Activo" className="text-xs animate-bounce">🚀</span>}
                       </div>
                       <div className={`text-lg font-mono ${trade.is_trailing ? 'text-orange-400 font-bold' : 'text-red-400'}`}>
                         ${formatPrice(trade.stop_loss)}
@@ -197,7 +199,7 @@ const Dashboard = () => {
         )}
       </div>
 
-      {/* RADAR DE INTELIGENCIA ARTIFICIAL (Se mantiene igual) */}
+      {/* RADAR DE INTELIGENCIA ARTIFICIAL */}
       <div className="mb-10">
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
           📡 Radar IA - Monitoreo en Tiempo Real (Umbral: {status.ai_threshold}%)
@@ -237,22 +239,19 @@ const Dashboard = () => {
 
       {/* HISTORIAL PAGINADO CON FILTRO */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden shadow-lg">
-
-        {/* Encabezado con Calendario */}
         <div className="px-6 py-4 border-b border-gray-700 bg-gray-900/50 flex flex-col md:flex-row justify-between items-center gap-4">
           <h3 className="text-lg font-bold text-white">📜 Historial de Operaciones Cerradas</h3>
-
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-400">Filtrar Día:</span>
-            <input
-              type="date"
+            <input 
+              type="date" 
               value={tradeDate}
               onChange={(e) => { setTradeDate(e.target.value); setTradePage(1); }}
               className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
             />
             {tradeDate && (
-              <button
-                onClick={() => { setTradeDate(''); setTradePage(1); }}
+              <button 
+                onClick={() => { setTradeDate(''); setTradePage(1); }} 
                 className="text-xs text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-900/20 rounded border border-red-900/50"
               >
                 ✕ Limpiar
@@ -261,7 +260,6 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Tabla */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-gray-400">
             <thead className="bg-gray-900/80 uppercase text-xs font-semibold text-gray-500">
@@ -301,14 +299,13 @@ const Dashboard = () => {
           </table>
         </div>
 
-        {/* Controles de Paginación */}
         {tradesInfo.total_pages > 0 && (
           <div className="px-6 py-4 border-t border-gray-700 bg-gray-900/50 flex justify-between items-center">
             <span className="text-sm text-gray-400">
               Total operaciones: <span className="font-bold text-white">{tradesInfo.total}</span>
             </span>
             <div className="flex gap-2 items-center">
-              <button
+              <button 
                 disabled={tradePage === 1}
                 onClick={() => setTradePage(p => p - 1)}
                 className="px-4 py-1.5 bg-gray-700 text-white font-bold rounded disabled:opacity-30 hover:bg-blue-600 transition-colors text-sm"
@@ -318,7 +315,7 @@ const Dashboard = () => {
               <span className="text-sm text-gray-300 px-3 py-1 font-mono">
                 Pág {tradesInfo.page} de {tradesInfo.total_pages}
               </span>
-              <button
+              <button 
                 disabled={tradePage === tradesInfo.total_pages}
                 onClick={() => setTradePage(p => p + 1)}
                 className="px-4 py-1.5 bg-gray-700 text-white font-bold rounded disabled:opacity-30 hover:bg-blue-600 transition-colors text-sm"
