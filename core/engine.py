@@ -47,6 +47,10 @@ class BotCore:
         risk_reward = float(os.getenv("RISK_REWARD_RATIO", "2.0"))
         self.be_trigger_r = float(os.getenv("BREAK_EVEN_TRIGGER_R", "1.0"))
         self.ts_trigger_r = float(os.getenv("TRAILING_STOP_TRIGGER_R", "1.5"))
+        # --- NUEVO: PARÁMETROS AGRESIVOS ---
+        self.be_plus_percent = float(os.getenv("BE_PLUS_PERCENT", "0.05"))
+        self.agg_ts_trigger_r = float(os.getenv("AGGRESSIVE_TS_TRIGGER_R", "3.0"))
+        self.agg_ts_percent = float(os.getenv("AGGRESSIVE_TS_PERCENT", "0.20"))
 
         # Módulos Compartidos
         self.scanner = MarketScanner()
@@ -340,43 +344,79 @@ class BotCore:
             db_trade = await session.get(Trade, trade.id)
             if not db_trade or db_trade.status != 'OPEN': return
 
-            # BREAK EVEN
+            # ==========================================
+            # NIVEL 1: BREAK EVEN + FEES
+            # ==========================================
             if not db_trade.is_break_even and r_multiple >= self.be_trigger_r:
-                old_sl, new_sl = db_trade.stop_loss, entry
-                print(f"🛡️ [{symbol}] Break Even. SL: {old_sl} -> {new_sl}")
+                old_sl = db_trade.stop_loss
+                # En lugar de ser exactamente 0, le damos un "Plus" para pagar spread/fees
+                plus_amount = atr * self.be_plus_percent
+                new_sl = float(entry + plus_amount) if is_long else float(entry - plus_amount)
+                
+                print(f"🛡️ [{symbol}] Break Even (+Fees). SL: {old_sl} -> {new_sl}")
                 if db_trade.binance_sl_id:
                     await self.client.cancel_order(symbol, db_trade.binance_sl_id)
                     sl_res, _ = await self.client.place_sl_tp(symbol, db_trade.side, db_trade.quantity, new_sl, db_trade.take_profit)
                     if sl_res: db_trade.binance_sl_id = str(sl_res.get('orderId'))
                 
                 session.add(TradeSLHistory(trade_id=db_trade.id, event_type='BREAK_EVEN', old_sl=old_sl, new_sl=new_sl, price_at_event=p))
-                db_trade.stop_loss, db_trade.is_break_even = new_sl, True
+                db_trade.stop_loss = new_sl
+                db_trade.is_break_even = True
                 await session.commit()
                 asset.current_trade = db_trade
 
-            # TRAILING STOP (Activación)
+            # ==========================================
+            # NIVEL 2: ACTIVACIÓN TRAILING STOP
+            # ==========================================
             if not db_trade.is_trailing and r_multiple >= self.ts_trigger_r:
-                print(f"🚀 [{symbol}] Trailing Stop Activado.")
-                if db_trade.binance_tp_id: await self.client.cancel_order(symbol, db_trade.binance_tp_id)
-                db_trade.is_trailing, db_trade.take_profit = True, 0.0
+                print(f"🚀 [{symbol}] Trailing Stop Activado. Anulando Take Profit.")
+                if db_trade.binance_tp_id: 
+                    await self.client.cancel_order(symbol, db_trade.binance_tp_id)
+                db_trade.is_trailing = True
+                db_trade.take_profit = 0.0
                 await session.commit()
 
-            # TRAILING STOP (Seguimiento)
+            # ==========================================
+            # NIVEL 3: SEGUIMIENTO (CLÁSICO VS AGRESIVO)
+            # ==========================================
             if db_trade.is_trailing:
-                potential_ts = p - atr if is_long else p + atr
-                if (is_long and potential_ts > db_trade.stop_loss) or (not is_long and potential_ts < db_trade.stop_loss):
-                    old_sl, new_sl = db_trade.stop_loss, round(potential_ts, 2)
+                # Decidir la fórmula matemática según la ganancia actual
+                if r_multiple >= self.agg_ts_trigger_r:
+                    # MODO AGRESIVO (Asegurar el recorrido)
+                    recorrido = abs(p - entry)
+                    distancia_ts = recorrido * self.agg_ts_percent
+                    event_type = 'TRAILING_AGGRESSIVE'
+                else:
+                    # MODO CLÁSICO (1 ATR de distancia para dejar respirar)
+                    distancia_ts = atr * 1.0 
+                    event_type = 'TRAILING_ATR'
+
+                potential_ts = p - distancia_ts if is_long else p + distancia_ts
+                
+                # Solo movemos el Stop Loss si la nueva posición asegura MÁS ganancia que la actual
+                move_sl = False
+                if is_long and potential_ts > db_trade.stop_loss: move_sl = True
+                elif not is_long and potential_ts < db_trade.stop_loss: move_sl = True
+
+                if move_sl:
+                    old_sl = db_trade.stop_loss
+                    new_sl = float(potential_ts)
+                    
+                    print(f"📈[{symbol}] Ajuste {event_type}. SL: {old_sl} -> {new_sl}")
+
                     if db_trade.binance_sl_id:
                         await self.client.cancel_order(symbol, db_trade.binance_sl_id)
                         sl_res, _ = await self.client.place_sl_tp(symbol, db_trade.side, db_trade.quantity, new_sl, 0)
                         if sl_res: db_trade.binance_sl_id = str(sl_res.get('orderId'))
 
-                    session.add(TradeSLHistory(trade_id=db_trade.id, event_type='TRAILING_STOP', old_sl=old_sl, new_sl=new_sl, price_at_event=p))
+                    session.add(TradeSLHistory(trade_id=db_trade.id, event_type=event_type, old_sl=old_sl, new_sl=new_sl, price_at_event=p))
                     db_trade.stop_loss = new_sl
                     await session.commit()
                     asset.current_trade = db_trade
 
-            # CIERRE SOFT STOP
+            # ==========================================
+            # CIERRE DE SEGURIDAD (SOFT STOP)
+            # ==========================================
             close, reason = False, ""
             if is_long:
                 if p <= db_trade.stop_loss: close, reason = True, "Stop Loss / Trailing"
@@ -393,7 +433,9 @@ class BotCore:
                 if db_trade.binance_sl_id: await self.client.cancel_order(symbol, db_trade.binance_sl_id)
                 if db_trade.binance_tp_id: await self.client.cancel_order(symbol, db_trade.binance_tp_id)
 
-                db_trade.status, db_trade.exit_price, db_trade.exit_time = 'CLOSED', p, datetime.utcnow()
+                db_trade.status = 'CLOSED'
+                db_trade.exit_price = p
+                db_trade.exit_time = datetime.utcnow()
                 pnl = (p - entry) * db_trade.quantity if is_long else (entry - p) * db_trade.quantity
                 db_trade.realized_pnl = round(pnl, 2)
                 db_trade.roe_percent = round((pnl / (entry * db_trade.quantity)) * 100, 2)
