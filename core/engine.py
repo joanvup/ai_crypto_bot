@@ -90,49 +90,32 @@ class BotCore:
                 print("🛑 No se pudieron obtener activos del escáner.")
                 return
 
-            final_symbols =[]
-
             # --- 3. ANCLAR SÍMBOLOS RECUPERADOS AL RADAR ---
+            # Si recuperamos un trade en 'DOGE' pero hoy no está en el Top 10, lo obligamos a entrar
+            # para que el bot siga monitoreando su Stop Loss y Trailing.
             for sym in self.recovered_trades.keys():
-                final_symbols.append(sym)
-                if sym in candidate_symbols:
-                    candidate_symbols.remove(sym)
-                print(f"   ⚓ Anclando {sym} al escáner por recuperación de trade activo.")
+                if sym not in top_symbols:
+                    top_symbols.append(sym)
+                    print(f"   ⚓ Anclando {sym} al escáner por recuperación de trade activo.")
 
-            # --- 4. ENTRENAR IA Y LLENAR CUPOS (SELECCIÓN NATURAL) ---
-            print(f"\n🧠 Iniciando fase de Entrenamiento. Buscando {self.max_monitored_assets} activos sanos...")
-            
-            # Unimos los recuperados (prioridad) + los candidatos
-            symbols_to_evaluate = final_symbols + candidate_symbols
-
-            for sym in symbols_to_evaluate:
-                # Si ya llenamos el cupo de tu .env y este no es un trade viejo rescatado, paramos.
-                if len(self.assets) >= self.max_monitored_assets and sym not in final_symbols:
-                    break
-                
-                # Inicializar temporalmente en memoria
+            # --- 4. ENTRENAR IA E INYECTAR MEMORIA ---
+            print("\n🧠 Iniciando fase de Entrenamiento Masivo (Esto puede tomar varios minutos)...")
+            for sym in top_symbols:
                 self.assets[sym] = AssetState(sym, self.timeframe)
                 
-                # INYECTAR TRADE RECUPERADO (Si existe)
+                # INYECTAR TRADE RECUPERADO
                 if sym in self.recovered_trades:
                     self.assets[sym].is_in_position = True
                     self.assets[sym].current_trade = self.recovered_trades[sym]
                 
-                # Intentar descargar datos y entrenar IA
                 success = await self._prepare_ai(sym)
-                
                 if not success:
-                    # Si falla pero tenemos plata metida ahí, lo dejamos vivo en el Dashboard para monitorearlo
-                    if sym in self.recovered_trades:
-                        print(f"   ⚠️ {sym} falló IA pero tiene trade abierto. Mantenido en cuarentena visual.")
-                    else:
-                        # Si falla y no tenemos trades, lo eliminamos sin piedad de la memoria
-                        print(f"   🗑️ {sym} descartado (Datos corruptos/insuficientes). Llamando suplente...")
-                        del self.assets[sym]
-                else:
-                    print(f"   ✅ {sym} aprobado y listo para el combate.")
+                    print(f"⚠️ {sym} omitido por falta de datos.")
             
-            print(f"\n🎯 Plantilla final completada: {len(self.assets)} activos activos en el Radar.")
+            # --- NUEVO: LIBERACIÓN DEL CANDADO ---
+            print("\n🔓 Todo el estado ha sido validado. Quitanto candado de seguridad.")
+            self.is_ready = True
+            print("\n✅ Todas las IAs listas. Desplegando redes de monitoreo...")
 
             # --- 5. ARRANCAR BUCLES CONCURRENTES (Escalonado) ---
             tasks = [asyncio.create_task(self._balance_snapshot_loop())]
@@ -147,16 +130,11 @@ class BotCore:
                 tasks.append(asyncio.create_task(self.ws.subscribe_ticker(asset.ws_symbol, lambda s, p, sym=sym: self._on_price_update(sym, p))))
                 tasks.append(asyncio.create_task(self._strategy_loop(sym)))
             
-            # --- 6. LIBERACIÓN DEL CANDADO ---
-            print("\n🔓 Todo el estado ha sido validado. Quitanto candado de seguridad.")
-            self.is_ready = True
-            
             await asyncio.gather(*tasks)
             
         except Exception as e:
             print(f"\n🚨 ERROR FATAL EN EL NÚCLEO DEL BOT 🚨")
             traceback.print_exc()
-
 
     async def _recover_state(self):
         """
@@ -230,29 +208,23 @@ class BotCore:
             return await self.client.get_balance()
 
     async def _prepare_ai(self, symbol: str) -> bool:
-        """
-        Descarga datos y entrena. Devuelve False si el activo está "roto" en Binance.
-        """
         asset = self.assets[symbol]
-        print(f"   ➤ Evaluando candidato: {symbol}...")
+        print(f"   ➤ Descargando historial para {symbol}...")
+        klines = await self.client.get_historical_klines(symbol, self.timeframe, limit=self.training_limit)
+        
+        if not klines or len(klines) < 50: return False
+
+        df = self.ta.apply_indicators(self.ta.prepare_dataframe(klines))
+        if df.empty or len(df) < 50: return False
+
         try:
-            klines = await self.client.get_historical_klines(symbol, self.timeframe, limit=self.training_limit)
+            asset.ai.predict(df)
+            print(f"      [{symbol}] IA cargada desde disco.")
+        except:
+            print(f"      [{symbol}] Entrenando nuevo modelo...")
+            await asyncio.to_thread(asset.ai.train, df)
             
-            if not klines or len(klines) < 50: 
-                return False
-
-            df = self.ta.apply_indicators(self.ta.prepare_dataframe(klines))
-            if df.empty or len(df) < 50: 
-                return False
-
-            try:
-                asset.ai.predict(df)
-            except:
-                await asyncio.to_thread(asset.ai.train, df)
-                
-            return True
-        except Exception as e:
-            return False
+        return True
 
     async def _on_price_update(self, symbol: str, price: float):
         asset = self.assets[symbol]
