@@ -63,7 +63,7 @@ class BotCore:
         self.assets = {} # Diccionario: {'BTC/USDT': AssetState, 'ETH/USDT': AssetState...}
         self.trade_lock = asyncio.Lock() # Bloqueo global para no superar el límite de trades
         self.recovered_trades = {} # <--- NUEVO: Memoria temporal de rescate
-        self.is_ready = False  # <--- NUEVO: Candado físico
+        self.is_ready = False  # <--- NUEVO: Candado físic
 
     async def start(self):
         try:
