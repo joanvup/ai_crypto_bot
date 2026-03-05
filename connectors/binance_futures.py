@@ -186,3 +186,35 @@ class BinanceFuturesClient:
         except Exception as e:
             print(f"❌ Error consultando detalles de orden {order_id}: {e}")
             return None
+
+    async def get_top_assets(self, limit: int = 10) -> list:
+        """
+        Escanea el mercado usando la conexión autenticada principal para evitar bloqueos.
+        """
+        print(f"🌍 Escaneando mercado global de Binance Futuros para obtener el TOP {limit}...")
+        try:
+            tickers = await self.exchange.fetch_tickers()
+            valid_pairs =[]
+            
+            for symbol, data in tickers.items():
+                if symbol.endswith(':USDT') and data.get('quoteVolume') is not None:
+                    # Filtros anti-zombies
+                    if data.get('active') is False: continue
+                    if data.get('last', 0) <= 0: continue
+                    
+                    clean_symbol = symbol.split(':')[0]
+                    valid_pairs.append({
+                        'symbol': clean_symbol,
+                        'volume': float(data['quoteVolume'])
+                    })
+            
+            valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
+            top_assets = [pair['symbol'] for pair in valid_pairs[:limit]]
+            
+            print(f"✅ Top {limit} Activos seleccionados: {', '.join(top_assets)}")
+            return top_assets
+            
+        except Exception as e:
+            # SI FALLA AQUÍ, IMPRIMIMOS EL ERROR GIGANTE PARA VER QUÉ DICE BINANCE
+            print(f"\n❌ ERROR CRÍTICO EN ESCÁNER DE MERCADO: {e}\n")
+            return['BTC/USDT', 'ETH/USDT']

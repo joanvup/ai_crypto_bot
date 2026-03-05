@@ -7,7 +7,7 @@ from database.session import AsyncSessionLocal
 from database.models import Trade, TradeSLHistory, BalanceHistory
 from connectors.binance_futures import BinanceFuturesClient
 from connectors.binance_ws import BinanceWebSocket
-from connectors.market_scanner import MarketScanner
+# from connectors.market_scanner import MarketScanner
 from ta_engine.indicators import TAEngine
 from ai_engine.model import AIPredictor
 from risk_manager.risk_engine import RiskManager
@@ -53,7 +53,7 @@ class BotCore:
         self.agg_ts_percent = float(os.getenv("AGGRESSIVE_TS_PERCENT", "0.20"))
 
         # Módulos Compartidos
-        self.scanner = MarketScanner()
+        #self.scanner = MarketScanner()
         self.client = BinanceFuturesClient()
         self.ws = BinanceWebSocket()
         self.ta = TAEngine()
@@ -82,9 +82,9 @@ class BotCore:
             await self._recover_state()
             
             # --- 2. ESCANEAR MERCADO (EL BANQUILLO DE SUPLENTES) ---
-            # Pedimos el triple de activos solicitados para tener suplentes de sobra en caso de fallos
             candidatos_limit = self.max_monitored_assets * 3
-            candidate_symbols = await self.scanner.get_top_assets(limit=candidatos_limit)
+            # AHORA USA EL CLIENTE PRINCIPAL
+            candidate_symbols = await self.client.get_top_assets(limit=candidatos_limit)
             
             if not candidate_symbols:
                 print("🛑 No se pudieron obtener activos del escáner.")
