@@ -134,12 +134,16 @@ class BotCore:
             
             print(f"\n🎯 Plantilla final completada: {len(self.assets)} activos activos en el Radar.")
 
-            # --- 5. ARRANCAR BUCLES CONCURRENTES ---
-            tasks =[
-                asyncio.create_task(self._balance_snapshot_loop())
-            ]
+            # --- 5. ARRANCAR BUCLES CONCURRENTES (Escalonado) ---
+            tasks = [asyncio.create_task(self._balance_snapshot_loop())]
+            
+            print("🔌 Conectando a los WebSockets de Binance de forma segura...")
             for sym in self.assets.keys():
                 asset = self.assets[sym]
+                
+                # Pausa de 0.5s entre conexiones para no disparar el límite de 5/seg de Binance
+                await asyncio.sleep(0.5) 
+                
                 tasks.append(asyncio.create_task(self.ws.subscribe_ticker(asset.ws_symbol, lambda s, p, sym=sym: self._on_price_update(sym, p))))
                 tasks.append(asyncio.create_task(self._strategy_loop(sym)))
             
@@ -268,6 +272,11 @@ class BotCore:
                     klines = await self.client.get_historical_klines(symbol, self.timeframe, limit=200)
                     if klines:
                         df = self.ta.apply_indicators(self.ta.prepare_dataframe(klines))
+                        # --- NUEVO: SALVAVIDAS DE PRECIO REST ---
+                        # Si el WS aún no ha enviado datos, usamos el precio de la vela cerrada
+                        if asset.current_price == 0.0:
+                            asset.current_price = float(df['close'].iloc[-1])
+                        # ----------------------------------------
                         pred, conf = asset.ai.predict(df)
                         direction = 'LONG' if pred == 1 else 'SHORT' if pred == -1 else 'NEUTRAL'
                         
