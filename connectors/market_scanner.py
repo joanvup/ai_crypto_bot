@@ -14,7 +14,6 @@ class MarketScanner:
             'enableRateLimit': True,
             'options': {
                 'defaultType': 'future',
-                'adjustForTimeDifference': True, # <--- EL ESCUDO FALTANTE AQUÍ
             }
         })
         
@@ -37,10 +36,6 @@ class MarketScanner:
                 # En Futuros, CCXT devuelve los símbolos como 'BTC/USDT:USDT'
                 # Filtramos para asegurarnos de que sean contratos perpetuos de USDT válidos
                 if symbol.endswith(':USDT') and data.get('quoteVolume') is not None:
-                    # --- NUEVO: FILTROS ANTI-ZOMBIES ---
-                    # Si Binance reporta la moneda como inactiva o su precio es 0, la ignoramos.
-                    if data.get('active') is False: continue
-                    if data.get('last', 0) <= 0: continue
                     # Limpiamos el nombre para que quede como 'BTC/USDT'
                     clean_symbol = symbol.split(':')[0]
                     
