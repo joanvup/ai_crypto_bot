@@ -14,6 +14,7 @@ class MarketScanner:
             'enableRateLimit': True,
             'options': {
                 'defaultType': 'future',
+                'adjustForTimeDifference': True, # <--- EL ESCUDO FALTANTE AQUÍ
             }
         })
         
