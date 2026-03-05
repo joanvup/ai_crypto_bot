@@ -39,8 +39,8 @@ class BotCore:
         self.training_limit = int(os.getenv("AI_TRAINING_LIMIT", "15000"))
         
         # Parámetros Multi-Activo
-        self.max_monitored_assets = int(os.getenv("MAX_MONITORED_ASSETS", "10"))
-        self.max_open_trades = int(os.getenv("MAX_OPEN_TRADES", "3"))
+        self.max_monitored_assets = int(os.getenv("MAX_MONITORED_ASSETS", "20"))
+        self.max_open_trades = int(os.getenv("MAX_OPEN_TRADES", "6"))
 
         # Riesgo
         risk_per_trade = float(os.getenv("RISK_PER_TRADE", "0.01"))
