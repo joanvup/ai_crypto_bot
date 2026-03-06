@@ -47,6 +47,7 @@ class BotCore:
         sl_multi = float(os.getenv("ATR_MULTIPLIER_SL", "1.5"))
         self.be_trigger_r = float(os.getenv("BREAK_EVEN_TRIGGER_R", "1.0"))
         self.ts_trigger_r = float(os.getenv("TRAILING_STOP_TRIGGER_R", "1.5"))
+        self.ts_distance_atr = float(os.getenv("TRAILING_STOP_DISTANCE_ATR", "1.0"))
         self.be_plus_percent = float(os.getenv("BE_PLUS_PERCENT", "0.05"))
         self.agg_ts_trigger_r = float(os.getenv("AGGRESSIVE_TS_TRIGGER_R", "3.0"))
         self.agg_ts_percent = float(os.getenv("AGGRESSIVE_TS_PERCENT", "0.20"))
@@ -413,7 +414,7 @@ class BotCore:
                     distancia = abs(p - entry) * self.agg_ts_percent
                     event_type = 'TRAILING_AGGRESSIVE'
                 else:
-                    distancia = atr * 1.0 
+                    distancia = atr * self.ts_distance_atr
                     event_type = 'TRAILING_ATR'
 
                 potential_ts = p - distancia if is_long else p + distancia
