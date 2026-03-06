@@ -33,10 +33,20 @@ async def get_status():
         if asset.is_in_position and asset.current_trade:
             t = asset.current_trade
             position_type = t.side
-            
-            # Cálculo de PNL en tiempo real
-            if t.side == 'LONG': pnl = (asset.current_price - t.entry_price) * t.quantity
-            else: pnl = (t.entry_price - asset.current_price) * t.quantity
+            # --- MATEMÁTICA DEL RIESGO ---
+            # Leemos el multiplicador real configurado en el motor de riesgo
+            initial_risk = (t.atr_at_entry * bot.risk.sl_multiplier) if t.atr_at_entry else 0.0001
+
+            if t.side == 'LONG': 
+                pnl = (asset.current_price - t.entry_price) * t.quantity
+                current_r = (asset.current_price - t.entry_price) / initial_risk
+                be_price = t.entry_price + (initial_risk * bot.be_trigger_r)
+                ts_price = t.entry_price + (initial_risk * bot.ts_trigger_r)
+            else: 
+                pnl = (t.entry_price - asset.current_price) * t.quantity
+                current_r = (t.entry_price - asset.current_price) / initial_risk
+                be_price = t.entry_price - (initial_risk * bot.be_trigger_r)
+                ts_price = t.entry_price - (initial_risk * bot.ts_trigger_r)
             
             roe = (pnl / (t.entry_price * t.quantity)) * 100 if t.entry_price > 0 else 0
             
@@ -47,7 +57,11 @@ async def get_status():
                 "pnl": round(pnl, 2),
                 "roe": round(roe, 2),
                 "atr": t.atr_at_entry,
-                "is_trailing": t.is_trailing
+                "is_trailing": t.is_trailing,
+                "is_break_even": t.is_break_even,
+                "current_r": current_r,
+                "be_price": be_price,
+                "ts_price": ts_price
             }
 
         asset_list.append({
@@ -65,6 +79,9 @@ async def get_status():
         "global_open_trades": active_count,
         "max_open_trades": bot.max_open_trades,
         "ai_threshold": bot.ai_threshold,
+        "be_trigger_r": bot.be_trigger_r,
+        "ts_trigger_r": bot.ts_trigger_r,
+        "rr_ratio": bot.risk.risk_reward_ratio,
         "assets": asset_list
     }
 

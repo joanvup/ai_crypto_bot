@@ -12,12 +12,16 @@ const formatPrice = (value) => {
 };
 
 const Dashboard = () => {
+  // --- ESTADOS GLOBALES ---
   const[status, setStatus] = useState(null);
   const [balance, setBalance] = useState(null);
-  const[balanceHistory, setBalanceHistory] = useState([]);
   
+  // --- ESTADOS DE LA GRÁFICA ---
+  const [balanceHistory, setBalanceHistory] = useState([]); // <--- ESTO ES LO QUE FALTABA
+  
+  // --- ESTADOS DEL HISTORIAL Y PAGINACIÓN ---
   const [tradesInfo, setTradesInfo] = useState({ data:[], total: 0, page: 1, total_pages: 1 });
-  const[tradePage, setTradePage] = useState(1);
+  const [tradePage, setTradePage] = useState(1);
   const [tradeDate, setTradeDate] = useState('');
   
   const[lastUpdated, setLastUpdated] = useState(new Date());
@@ -33,6 +37,7 @@ const Dashboard = () => {
       if (balanceData) setBalance(balanceData);
       if (tradesData && tradesData.data) setTradesInfo(tradesData);
       
+      // Formateo de datos para la gráfica
       if (chartData && Array.isArray(chartData)) {
         const formattedChart = chartData.map(item => ({
           ...item,
@@ -40,9 +45,10 @@ const Dashboard = () => {
         }));
         setBalanceHistory(formattedChart);
       }
+      
       setLastUpdated(new Date());
     } catch (error) {
-      console.error("Error obteniendo datos", error);
+      console.error("Error obteniendo datos del servidor", error);
     }
   };
 
@@ -81,23 +87,13 @@ const Dashboard = () => {
           </div>
         </div>
 
-        <div className="flex gap-4 mt-4 md:mt-0 flex-wrap justify-center">
-          {/* NUEVO: PANEL DE ESTRATEGIA GLOBAL */}
-          <div className="bg-gray-900 p-4 rounded-lg border border-gray-700 hidden lg:block">
-            <div className="text-gray-400 text-xs uppercase mb-1">Reglas de Estrategia</div>
-            <div className="flex gap-4 text-sm font-bold">
-              <span className="text-yellow-400">BE: {status.be_trigger_r}R</span>
-              <span className="text-orange-400">TS: {status.ts_trigger_r}R</span>
-              <span className="text-green-400">TP: {status.rr_ratio}R</span>
-            </div>
-          </div>
-
+        <div className="flex gap-6 mt-4 md:mt-0">
           <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
             <div className="text-gray-400 text-xs uppercase">Balance USDT</div>
             <div className="text-2xl font-bold text-white">${balance.total_balance.toFixed(2)}</div>
           </div>
           <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
-            <div className="text-gray-400 text-xs uppercase">Operaciones</div>
+            <div className="text-gray-400 text-xs uppercase">Operaciones Globales</div>
             <div className="text-2xl font-bold text-white flex items-center gap-2">
               <span className={status.global_open_trades >= status.max_open_trades ? 'text-orange-400' : 'text-green-400'}>
                 {status.global_open_trades}
@@ -108,7 +104,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* GRÁFICA DE RENDIMIENTO */}
+      {/* GRÁFICA DE RENDIMIENTO (EQUITY CURVE) */}
       <div className="mb-10 bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
         <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
           📈 Curva de Rendimiento (Equity)
@@ -116,7 +112,7 @@ const Dashboard = () => {
         <div className="h-64 w-full">
           {balanceHistory.length < 2 ? (
             <div className="flex h-full items-center justify-center text-gray-500 font-mono text-sm border border-dashed border-gray-600 rounded-lg">
-              Recopilando datos históricos del balance (Requiere al menos 2 snapshots)...
+              Recopilando datos históricos del balance (Requiere al menos 2 snapshots de 15 min)...
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
@@ -159,13 +155,8 @@ const Dashboard = () => {
               const isLong = asset.position_type === 'LONG';
               const pnlColor = trade.pnl >= 0 ? 'text-green-400' : 'text-red-400';
               
-              // Cálculo para la barra de progreso
-              const progressPercent = Math.min(Math.max((trade.current_r / status.rr_ratio) * 100, 0), 100);
-              
               return (
                 <div key={asset.symbol} className={`bg-gray-800 rounded-xl border-2 shadow-lg overflow-hidden ${isLong ? 'border-green-900/50' : 'border-red-900/50'}`}>
-                  
-                  {/* Card Header (Intacto pero con Badge R) */}
                   <div className={`px-6 py-4 flex justify-between items-center ${isLong ? 'bg-green-900/20' : 'bg-red-900/20'}`}>
                     <div className="flex items-center gap-3">
                       <span className={`px-3 py-1 rounded font-bold text-sm ${isLong ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
@@ -173,19 +164,10 @@ const Dashboard = () => {
                       </span>
                       <span className="text-xl font-bold text-white">{asset.symbol}</span>
                     </div>
-                    
-                    <div className="flex flex-col items-end">
-                      <div className={`text-2xl font-mono font-bold ${pnlColor}`}>
-                        {trade.pnl >= 0 ? '+' : ''}{trade.pnl.toFixed(2)} USDT <span className="text-sm opacity-80">({trade.roe.toFixed(2)}%)</span>
-                      </div>
-                      {/* NUEVO: BADGE DE RIESGO */}
-                      <div className={`text-xs mt-1 px-2 py-0.5 rounded font-mono font-bold ${trade.current_r >= 0 ? 'bg-blue-900/40 text-blue-300' : 'bg-red-900/40 text-red-300'}`}>
-                        {trade.current_r >= 0 ? '📈' : '📉'} {trade.current_r.toFixed(2)} R
-                      </div>
+                    <div className={`text-2xl font-mono font-bold ${pnlColor}`}>
+                      {trade.pnl >= 0 ? '+' : ''}{trade.pnl.toFixed(2)} USDT <span className="text-sm opacity-80">({trade.roe.toFixed(2)}%)</span>
                     </div>
                   </div>
-                  
-                  {/* Grid 4 Columnas (Intacto) */}
                   <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <div className="text-xs text-gray-500 uppercase">Precio Actual</div>
@@ -210,32 +192,6 @@ const Dashboard = () => {
                       </div>
                     </div>
                   </div>
-
-                  {/* NUEVA SECCIÓN: METAS DE ESTRATEGIA (PROGRESO) */}
-                  <div className="px-6 pb-6">
-                    <div className="p-3 bg-gray-900/60 rounded-lg border border-gray-700/50">
-                      <div className="flex justify-between text-xs text-gray-400 mb-2 font-mono">
-                        <span className={trade.is_break_even ? "text-yellow-400 font-bold" : ""}>
-                          Meta BE ({status.be_trigger_r}R): <strong className="text-white">${formatPrice(trade.be_price)}</strong> {trade.is_break_even ? '🔒' : ''}
-                        </span>
-                        <span className={trade.is_trailing ? "text-orange-400 font-bold" : ""}>
-                          Meta TS ({status.ts_trigger_r}R): <strong className="text-white">${formatPrice(trade.ts_price)}</strong> {trade.is_trailing ? '🚀' : ''}
-                        </span>
-                      </div>
-                      
-                      {/* Barra de Progreso Visual */}
-                      <div className="relative w-full bg-gray-800 rounded-full h-2 mt-1 border border-gray-700 overflow-hidden">
-                        <div 
-                          className={`absolute top-0 left-0 h-2 rounded-full transition-all duration-500 ${trade.current_r >= 0 ? 'bg-blue-500' : 'bg-red-500'}`}
-                          style={{ width: `${progressPercent}%` }}
-                        ></div>
-                        {/* Marcadores */}
-                        <div className="absolute top-0 h-2 w-1 bg-yellow-400/80" style={{ left: `${(status.be_trigger_r / status.rr_ratio) * 100}%` }}></div>
-                        <div className="absolute top-0 h-2 w-1 bg-orange-500/80" style={{ left: `${(status.ts_trigger_r / status.rr_ratio) * 100}%` }}></div>
-                      </div>
-                    </div>
-                  </div>
-
                 </div>
               );
             })}
@@ -243,7 +199,7 @@ const Dashboard = () => {
         )}
       </div>
 
-      {/* RADAR DE INTELIGENCIA ARTIFICIAL (Intacto) */}
+      {/* RADAR DE INTELIGENCIA ARTIFICIAL */}
       <div className="mb-10">
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
           📡 Radar IA - Monitoreo en Tiempo Real (Umbral: {status.ai_threshold}%)
@@ -281,9 +237,8 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* HISTORIAL PAGINADO (Intacto) */}
+      {/* HISTORIAL PAGINADO CON FILTRO */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden shadow-lg">
-        {/* ... Mismo código de Historial que ya tenías ... */}
         <div className="px-6 py-4 border-b border-gray-700 bg-gray-900/50 flex flex-col md:flex-row justify-between items-center gap-4">
           <h3 className="text-lg font-bold text-white">📜 Historial de Operaciones Cerradas</h3>
           <div className="flex items-center gap-3">
@@ -370,8 +325,8 @@ const Dashboard = () => {
             </div>
           </div>
         )}
-      </div>
 
+      </div>
     </div>
   );
 };

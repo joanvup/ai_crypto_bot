@@ -39,6 +39,10 @@ class OpenTradeInfo(BaseModel):
     roe: float
     atr: float
     is_trailing: bool
+    is_break_even: bool
+    current_r: float
+    be_price: float
+    ts_price: float
 
 class AssetStatus(BaseModel):
     symbol: str
@@ -55,6 +59,9 @@ class BotStatus(BaseModel):
     global_open_trades: int
     max_open_trades: int
     ai_threshold: float
+    be_trigger_r: float
+    ts_trigger_r: float
+    rr_ratio: float
     assets: list[AssetStatus] # Ahora es una lista de todos los activos escaneados
 
 class BalanceHistoryResponse(BaseModel):

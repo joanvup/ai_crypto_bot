@@ -44,6 +44,7 @@ class BotCore:
         # Riesgo y Trailing Stop Agresivo
         risk_per_trade = float(os.getenv("RISK_PER_TRADE", "0.01"))
         risk_reward = float(os.getenv("RISK_REWARD_RATIO", "2.0"))
+        sl_multi = float(os.getenv("ATR_MULTIPLIER_SL", "1.5"))
         self.be_trigger_r = float(os.getenv("BREAK_EVEN_TRIGGER_R", "1.0"))
         self.ts_trigger_r = float(os.getenv("TRAILING_STOP_TRIGGER_R", "1.5"))
         self.be_plus_percent = float(os.getenv("BE_PLUS_PERCENT", "0.05"))
@@ -55,7 +56,7 @@ class BotCore:
         self.client = BinanceFuturesClient()
         self.ws = BinanceWebSocket()
         self.ta = TAEngine()
-        self.risk = RiskManager(risk_per_trade=risk_per_trade, risk_reward_ratio=risk_reward)
+        self.risk = RiskManager(risk_per_trade=risk_per_trade, risk_reward_ratio=risk_reward, sl_multiplier=sl_multi)
         
         # Estado Global
         self.assets = {} 
