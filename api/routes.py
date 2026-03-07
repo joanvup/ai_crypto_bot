@@ -130,7 +130,15 @@ async def get_trades(
         
         result = await db.execute(query)
         trades = result.scalars().all()
-        
+
+        # --- SOLUCIÓN DE ZONA HORARIA (TIMEZONE FIX) ---
+        # Nos aseguramos de que las fechas salgan de la API marcadas como UTC explícito
+        for t in trades:
+            if t.entry_time and t.entry_time.tzinfo is None:
+                t.entry_time = t.entry_time.replace(tzinfo=timezone.utc)
+            if t.exit_time and t.exit_time.tzinfo is None:
+                t.exit_time = t.exit_time.replace(tzinfo=timezone.utc)
+
         # 4. Calcular total de páginas
         total_pages = (total + per_page - 1) // per_page if total > 0 else 1
         
@@ -151,6 +159,10 @@ async def get_balance_history(db: AsyncSession = Depends(get_db)):
         query = select(BalanceHistory).order_by(desc(BalanceHistory.timestamp)).limit(100)
         result = await db.execute(query)
         records = result.scalars().all()
+        # --- TIMEZONE FIX PARA LA GRÁFICA ---
+        for r in records:
+            if r.timestamp and r.timestamp.tzinfo is None:
+                r.timestamp = r.timestamp.replace(tzinfo=timezone.utc)
         
         # Invertimos la lista para que la gráfica vaya de izquierda (viejo) a derecha (nuevo)
         return list(reversed(records))
