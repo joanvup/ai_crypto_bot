@@ -106,31 +106,29 @@ async def get_balance():
 async def get_trades(
     page: int = Query(1, ge=1),
     per_page: int = Query(10, ge=1, le=100),
-    filter_date: str = None, # Espera formato YYYY-MM-DD
+    filter_date: str = None, 
     db: AsyncSession = Depends(get_db)
 ):
-    """Obtiene el historial paginado y filtrado por fecha."""
     try:
-        query = select(Trade).where(Trade.status == 'CLOSED') # Solo mostrar cerrados en el historial
+        query = select(Trade).where(Trade.status == 'CLOSED') 
         
-        # 1. Aplicar filtro de fecha si el usuario seleccionó un día
+        # 1. Filtro de Fecha Corregido (Ignorar la hora, buscar en el día completo)
         if filter_date:
+            # Casteamos el texto a una fecha real
             target_date = datetime.strptime(filter_date, "%Y-%m-%d").date()
-            # Convertimos el timestamp de la BD a fecha para compararlo
+            # En SQLAlchemy, extraer la parte de la fecha de un timestamp asegura cruces precisos
             query = query.where(func.date(Trade.entry_time) == target_date)
             
-        # 2. Contar el total de registros (para saber cuántas páginas hay)
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
         
-        # 3. Aplicar paginación
         offset = (page - 1) * per_page
         query = query.order_by(desc(Trade.entry_time)).offset(offset).limit(per_page)
         
         result = await db.execute(query)
         trades = result.scalars().all()
-
+        
         # --- SOLUCIÓN DE ZONA HORARIA (TIMEZONE FIX) ---
         # Nos aseguramos de que las fechas salgan de la API marcadas como UTC explícito
         for t in trades:
@@ -138,8 +136,7 @@ async def get_trades(
                 t.entry_time = t.entry_time.replace(tzinfo=timezone.utc)
             if t.exit_time and t.exit_time.tzinfo is None:
                 t.exit_time = t.exit_time.replace(tzinfo=timezone.utc)
-
-        # 4. Calcular total de páginas
+        
         total_pages = (total + per_page - 1) // per_page if total > 0 else 1
         
         return {
@@ -153,18 +150,16 @@ async def get_trades(
 
 @router.get("/balance-history", response_model=list[BalanceHistoryResponse])
 async def get_balance_history(db: AsyncSession = Depends(get_db)):
-    """Obtiene los últimos 100 registros de balance para dibujar la gráfica."""
     try:
-        # Obtenemos los más recientes primero para limitar a 100
         query = select(BalanceHistory).order_by(desc(BalanceHistory.timestamp)).limit(100)
         result = await db.execute(query)
         records = result.scalars().all()
+        
         # --- TIMEZONE FIX PARA LA GRÁFICA ---
         for r in records:
             if r.timestamp and r.timestamp.tzinfo is None:
                 r.timestamp = r.timestamp.replace(tzinfo=timezone.utc)
-        
-        # Invertimos la lista para que la gráfica vaya de izquierda (viejo) a derecha (nuevo)
+                
         return list(reversed(records))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
