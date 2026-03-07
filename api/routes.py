@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
+from datetime import datetime, timezone
 from database.session import get_db
 from database.models import Trade, BalanceHistory
 from api.schemas import TradeResponse, BalanceResponse, BotStatus, PaginatedTradesResponse, BalanceHistoryResponse
