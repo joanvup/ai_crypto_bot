@@ -1,7 +1,6 @@
 from sqlalchemy import select, func
 import os
 import asyncio
-import time  # <--- NUEVO IMPORT PARA EL COOLDOWN
 from datetime import datetime, timezone
 from database.session import AsyncSessionLocal
 from database.models import Trade, TradeSLHistory, BalanceHistory
@@ -28,26 +27,24 @@ class AssetState:
         self.latest_prediction = "ESPERANDO"
         self.latest_confidence = 0.0
         self.last_atr = 0.0
-        # --- NUEVO: FRENOS DE SEGURIDAD ---
-        self.cooldown_until = 0  
-        self.consecutive_losses = 0
-        self.last_trade_date = ""
 
 class BotCore:
     def __init__(self):
+        # Parámetros Globales
         self.timeframe = os.getenv("TIMEFRAME", "1h")
         self.strategy_interval = int(os.getenv("STRATEGY_INTERVAL_SECONDS", "5"))
         self.ai_threshold = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "47.0"))
         self.training_limit = int(os.getenv("AI_TRAINING_LIMIT", "15000"))
         self.retrain_hours = int(os.getenv("AI_RETRAIN_INTERVAL_HOURS", "6"))
         
+        # Parámetros Multi-Activo
         self.max_monitored_assets = int(os.getenv("MAX_MONITORED_ASSETS", "10"))
         self.max_open_trades = int(os.getenv("MAX_OPEN_TRADES", "3"))
 
+        # Riesgo y Trailing Stop Agresivo
         risk_per_trade = float(os.getenv("RISK_PER_TRADE", "0.01"))
         risk_reward = float(os.getenv("RISK_REWARD_RATIO", "2.0"))
         sl_multi = float(os.getenv("ATR_MULTIPLIER_SL", "1.5"))
-        
         self.be_trigger_r = float(os.getenv("BREAK_EVEN_TRIGGER_R", "1.0"))
         self.ts_trigger_r = float(os.getenv("TRAILING_STOP_TRIGGER_R", "1.5"))
         self.ts_distance_atr = float(os.getenv("TRAILING_STOP_DISTANCE_ATR", "1.0"))
@@ -55,12 +52,14 @@ class BotCore:
         self.agg_ts_trigger_r = float(os.getenv("AGGRESSIVE_TS_TRIGGER_R", "3.0"))
         self.agg_ts_percent = float(os.getenv("AGGRESSIVE_TS_PERCENT", "0.20"))
 
+        # Módulos Compartidos
         self.scanner = MarketScanner()
         self.client = BinanceFuturesClient()
         self.ws = BinanceWebSocket()
         self.ta = TAEngine()
         self.risk = RiskManager(risk_per_trade=risk_per_trade, risk_reward_ratio=risk_reward, sl_multiplier=sl_multi)
         
+        # Estado Global
         self.assets = {} 
         self.trade_lock = asyncio.Lock() 
         self.recovered_trades = {}
@@ -88,13 +87,13 @@ class BotCore:
             try:
                 print("⏱️ Sincronizando reloj con Binance...")
                 await self.client.exchange.load_time_difference()
-                # --- NUEVO: Cargar reglas del mercado para leer límites de cantidad ---
-                await self.client.exchange.load_markets()
             except Exception as e:
                 print(f"⚠️ Aviso de sincronización: {e}")
 
+            # 1. Recuperar y Limpiar Estado
             await self._recover_state()
             
+            # 2. Escanear Mercado
             top_symbols = await self.scanner.get_top_assets(limit=self.max_monitored_assets)
             if not top_symbols:
                 print("🛑 No se pudieron obtener activos del escáner.")
@@ -105,14 +104,18 @@ class BotCore:
                     top_symbols.append(sym)
                     print(f"   ⚓ Anclando {sym} al escáner por recuperación de trade activo.")
 
+            # 3. Entrenamiento y Purgado (SOLUCIÓN 1: Auto-Limpieza)
             print("\n🧠 Iniciando fase de Entrenamiento Masivo (Esto puede tomar varios minutos)...")
             for sym in top_symbols:
                 self.assets[sym] = AssetState(sym, self.timeframe)
+                
                 if sym in self.recovered_trades:
                     self.assets[sym].is_in_position = True
                     self.assets[sym].current_trade = self.recovered_trades[sym]
                 
                 success = await self._prepare_ai(sym)
+                
+                # Si falla por falta de datos (Ej: Moneda nueva), se ELIMINA de la memoria
                 if not success:
                     print(f"🧹 Purgando {sym} de la memoria por falta de datos históricos.")
                     del self.assets[sym]
@@ -121,10 +124,9 @@ class BotCore:
             self.is_ready = True
             print("✅ Todas las IAs listas. Desplegando redes de monitoreo...")
 
+            # 4. Arrancar bucles
             tasks =[
-                asyncio.create_task(self._balance_snapshot_loop()),
-                asyncio.create_task(self._time_sync_loop()),
-                asyncio.create_task(self._orphan_sweeper_loop())
+                asyncio.create_task(self._balance_snapshot_loop())
             ]
             for sym in self.assets.keys():
                 asset = self.assets[sym]
@@ -138,6 +140,7 @@ class BotCore:
             traceback.print_exc()
 
     async def _recover_state(self):
+        """Lee la BD, ELIMINA DUPLICADOS, y concilia con Binance (SOLUCIÓN 3)."""
         print("\n🔄 Iniciando Módulo de Recuperación de Estado...")
         async with AsyncSessionLocal() as session:
             query = select(Trade).where(Trade.status == 'OPEN')
@@ -150,6 +153,7 @@ class BotCore:
 
             print(f"   🔎 Encontradas {len(open_trades)} operaciones OPEN en Base de Datos.")
 
+            # Agrupar trades por símbolo para detectar fantasmas/duplicados
             trades_by_symbol = {}
             for t in open_trades:
                 if t.symbol not in trades_by_symbol:
@@ -159,16 +163,20 @@ class BotCore:
             live_positions = await self.client.get_open_positions()
 
             for sym, trades in trades_by_symbol.items():
+                # Ordenar cronológicamente (el más nuevo al final)
                 trades.sort(key=lambda x: x.entry_time)
+                
+                # Si hay duplicados, cerrar los viejos (Ghost Trades)
                 if len(trades) > 1:
-                    print(f"   🧹 Detectados {len(trades)} trades para {sym}. Limpiando duplicados...")
+                    print(f"   🧹 Detectados {len(trades)} trades para {sym}. Limpiando {len(trades)-1} duplicados...")
                     for old_trade in trades[:-1]:
                         old_trade.status = 'CLOSED'
                         old_trade.exit_time = datetime.utcnow()
-                        old_trade.exit_price = old_trade.entry_price 
+                        old_trade.exit_price = old_trade.entry_price # Salida plana
                         old_trade.realized_pnl = 0.0
                         old_trade.roe_percent = 0.0
                 
+                # Quedarnos solo con el más reciente
                 active_trade = trades[-1]
                 is_alive = False
 
@@ -194,43 +202,6 @@ class BotCore:
 
             await session.commit()
 
-    async def _time_sync_loop(self):
-        """Previene el Time Drift resincronizando el reloj cada 1 hora automáticamente."""
-        while True:
-            await asyncio.sleep(3600) # Cada 1 hora
-            try:
-                await self.client.exchange.load_time_difference()
-                print("⏱️ Sincronización horaria periódica completada.")
-            except Exception: pass
-
-    async def _orphan_sweeper_loop(self):
-        """Busca operaciones en Binance que no estén en la BD y las cierra (Evita fugas de capital)."""
-        print("🧹 Orphan Sweeper activado (Vigilando posiciones fantasma en Binance).")
-        while True:
-            await asyncio.sleep(600) # Revisa cada 10 minutos
-            
-            # En dry_run no hay posiciones reales que cerrar
-            if self.client.environment == 'dry_run': continue
-                
-            try:
-                live_positions = await self.client.get_open_positions()
-                if not live_positions: continue
-                
-                async with AsyncSessionLocal() as session:
-                    query = select(Trade.symbol).where(Trade.status == 'OPEN')
-                    result = await session.execute(query)
-                    # Obtenemos los símbolos que EL BOT cree que están abiertos
-                    db_symbols = [row[0] for row in result.all()]
-                    
-                    for sym, data in live_positions.items():
-                        if sym not in db_symbols:
-                            print(f"\n🚨 ALERTA SWEEPER: Operación Fantasma detectada en Binance ({sym}).")
-                            print("   Ejecutando protocolo de seguridad: CIERRE INMEDIATO A MERCADO.")
-                            #await self.client.panic_close_position(sym, data['side'])
-                            await self.client.panic_close_position(sym, data['side'], data['contracts'])
-            except Exception as e:
-                print(f"❌ Error en Orphan Sweeper: {e}")
-
     async def _balance_snapshot_loop(self):
         print("📸 Snapshot de balance iniciado (Guardando histórico cada 15 min).")
         while True:
@@ -246,12 +217,14 @@ class BotCore:
                         )
                         session.add(snapshot)
                         await session.commit()
-            except Exception: pass
+            except Exception as e:
+                pass
             await asyncio.sleep(900)
 
     async def _prepare_ai(self, symbol: str) -> bool:
         print(f"   ➤ Descargando historial para {symbol}...")
         klines = await self.client.get_historical_klines(symbol, self.timeframe, limit=self.training_limit)
+        
         if not klines or len(klines) < 50: return False
 
         df = self.ta.apply_indicators(self.ta.prepare_dataframe(klines))
@@ -280,17 +253,14 @@ class BotCore:
                     await asyncio.sleep(1)
                     continue
                 
-                # --- NUEVO: SISTEMA ANTI-SPAM (COOLDOWN) ---
-                if time.time() < asset.cooldown_until:
-                    await asyncio.sleep(self.strategy_interval)
-                    continue
-                
                 if not asset.is_in_position:
                     klines = await self.client.get_historical_klines(symbol, self.timeframe, limit=200)
                     if klines:
                         df = self.ta.apply_indicators(self.ta.prepare_dataframe(klines))
                         
                         if not df.empty:
+                            # --- SOLUCIÓN 2: PRECIO DE RESPALDO (Fallback) ---
+                            # Si el WS está dormido, usamos el cierre de la vela reciente
                             if asset.current_price == 0.0:
                                 asset.current_price = float(df['close'].iloc[-1])
                                 
@@ -310,9 +280,6 @@ class BotCore:
                                 print("\n")
                                 await self._execute_trade(symbol, direction, df)
             except Exception as e:
-                error_msg = str(e)
-                if "-1021" in error_msg:
-                    asyncio.create_task(self.client.exchange.load_time_difference())
                 pass
             
             await asyncio.sleep(self.strategy_interval)
@@ -334,23 +301,7 @@ class BotCore:
 
     async def _execute_trade(self, symbol: str, direction: str, df):
         asset = self.assets[symbol]
-        # --- ESCUDO ANTI-FUNDING EN TIEMPO REAL ---
-        funding_rate = await self.client.get_funding_rate(symbol)
-        tolerance = float(os.getenv("MAX_FUNDING_RATE_TOLERANCE", "0.05")) / 100.0
         
-        # Lógica de Binance: Si es positivo, LONG paga a SHORT. Si es negativo, SHORT paga a LONG.
-        will_pay = False
-        if direction == 'LONG' and funding_rate > 0:
-            will_pay = True
-        elif direction == 'SHORT' and funding_rate < 0:
-            will_pay = True
-            
-        if will_pay and abs(funding_rate) > tolerance:
-            print(f"🚨 TRADE ABORTADO[{symbol}]: Funding Rate de {funding_rate*100:.4f}% excede límite de {tolerance*100:.2f}%.")
-            # Le damos un cooldown de 15 minutos para que pase el cobro del Funding
-            asset.cooldown_until = time.time() + 900 
-            return
-        # ------------------------------------------
         async with self.trade_lock:
             current_open_trades = sum(1 for a in self.assets.values() if a.is_in_position or a.trade_in_progress)
             if current_open_trades >= self.max_open_trades: return
@@ -362,69 +313,25 @@ class BotCore:
             
             theoretical_price = float(df['close'].iloc[-1])
             atr = float(df['ATRr_14'].iloc[-1])
+            sl, tp = self.risk.calculate_sl_tp(direction, theoretical_price, atr)
             
-            sl_initial, tp_initial = self.risk.calculate_sl_tp(direction, theoretical_price, atr)
+            if direction == 'LONG' and sl >= theoretical_price: sl = theoretical_price - (atr * 1.5)
+            elif direction == 'SHORT' and sl <= theoretical_price: sl = theoretical_price + (atr * 1.5)
             
-            if direction == 'LONG' and sl_initial >= theoretical_price: 
-                sl_initial = theoretical_price - (atr * 1.5)
-            elif direction == 'SHORT' and sl_initial <= theoretical_price: 
-                sl_initial = theoretical_price + (atr * 1.5)
-            
-            size = float(self.risk.calculate_position_size(balance, theoretical_price, sl_initial))
+            size = float(self.risk.calculate_position_size(balance, theoretical_price, sl))
             if size <= 0: return
-            # ==============================================================
-            # NUEVO: FILTRO DE SPREAD (ESCUDO ANTI-MICROCOINS COMO PORT3)
-            # ==============================================================
-            bid, ask = await self.client.get_bid_ask(symbol)
-            if bid > 0 and ask > 0:
-                spread = ask - bid
-                sl_distance = abs(theoretical_price - sl_initial)
-                
-                # Si el Spread se come más del 30% de tu distancia de Stop Loss, es un ROBO.
-                if sl_distance > 0 and spread > (sl_distance * 0.30):
-                    print(f"🛑 TRADE ABORTADO [{symbol}]: Spread abusivo (${spread:.6f}). Freno anti-liquidación activado.")
-                    asset.cooldown_until = time.time() + 300 # Cuarentena de 5 minutos
-                    return
-            # ==============================================================
-            # --- NUEVO: REVISIÓN DE LÍMITES DE BINANCE ANTES DE EJECUTAR ---
-            try:
-                market = self.client.exchange.markets.get(symbol)
-                if market and 'limits' in market and 'amount' in market['limits']:
-                    max_qty = float(market['limits']['amount']['max'])
-                    if size > max_qty:
-                        print(f"   ⚠️ Tamaño calculado ({size}) supera límite de Binance. Reduciendo a {max_qty}.")
-                        size = max_qty
-            except Exception: pass
-            # -------------------------------------------------------------
 
             print(f"\n⚡ SEÑAL [{symbol}]: {direction} | Confianza: {asset.latest_confidence:.2f}%")
             side = 'BUY' if direction == 'LONG' else 'SELL'
             
-            results = await self.client.place_atomic_trade(symbol, side, size, sl_initial, tp_initial)
+            results = await self.client.place_atomic_trade(symbol, side, size, sl, tp)
             
             if results and isinstance(results, list) and len(results) >= 1:
                 entry_res = results[0]
-                
-                # --- NUEVO: ACTIVAR COOLDOWN SI HAY ERROR ---
                 if 'code' in entry_res:
-                    error_msg = entry_res.get('msg', 'Error desconocido')
-                    print(f"🚨 Binance rechazó la orden en {symbol}: {error_msg}")
-                    print(f"⏳ {symbol} puesto en Cuarentena por 5 minutos.")
-                    asset.cooldown_until = time.time() + 300 # 5 minutos de pausa
+                    print(f"🚨 Error de Binance en {symbol}: {entry_res}")
                     return
-                # ---------------------------------------------
-                # ======================================================
-                # NUEVO: AUDITORÍA ESTRICTA DE RECHAZOS EN SL Y TP
-                # ======================================================
-                if len(results) == 3:
-                    sl_raw = results[1]
-                    tp_raw = results[2]
-                    
-                    if 'code' in sl_raw:
-                        print(f"   ⚠️ BINANCE RECHAZÓ EL STOP LOSS HARD: {sl_raw.get('msg')} (Código: {sl_raw.get('code')})")
-                    if 'code' in tp_raw:
-                        print(f"   ⚠️ BINANCE RECHAZÓ EL TAKE PROFIT HARD: {tp_raw.get('msg')} (Código: {tp_raw.get('code')})")
-                # ======================================================
+
                 main_id = str(entry_res.get('orderId'))
                 await asyncio.sleep(0.6) 
                 
@@ -435,7 +342,7 @@ class BotCore:
 
                 sl_real, tp_real = self.risk.calculate_sl_tp(direction, real_entry_price, atr)
 
-                sl_res = next((o for o in results if o.get('type') in['STOP', 'STOP_MARKET']), None)
+                sl_res = next((o for o in results if o.get('type') in ['STOP', 'STOP_MARKET']), None)
                 tp_res = next((o for o in results if o.get('type') in['TAKE_PROFIT', 'TAKE_PROFIT_MARKET']), None)
 
                 async with AsyncSessionLocal() as session:
@@ -455,19 +362,7 @@ class BotCore:
                     asset.is_in_position = True
                     print(f"✅ TRADE SINCRONIZADO [{symbol}]: Entrada a ${real_entry_price}")
         except Exception as e:
-            error_msg = str(e)
-            print(f"❌ Error ejecutando trade para {symbol}: {error_msg}")
-            
-            # --- AUTO-CURACIÓN DEL ERROR -1021 ---
-            if "-1021" in error_msg or "Timestamp" in error_msg:
-                print(f"⏱️ Desfase de reloj detectado al operar {symbol}. Resincronizando de emergencia...")
-                # Lanzamos la sincronización sin bloquear el código
-                asyncio.create_task(self.client.exchange.load_time_difference())
-            
-            # --- CAJA DE PENALIZACIÓN (COOLDOWN) ---
-            print(f"⏳ {symbol} puesto en Cuarentena por 5 minutos por fallo crítico.")
-            asset.cooldown_until = time.time() + 300
-
+            print(f"❌ Error ejecutando trade para {symbol}: {e}")
         finally:
             asset.trade_in_progress = False
 
@@ -502,8 +397,7 @@ class BotCore:
                     if sl_res: db_trade.binance_sl_id = str(sl_res.get('orderId'))
                 
                 session.add(TradeSLHistory(trade_id=db_trade.id, event_type='BREAK_EVEN', old_sl=old_sl, new_sl=new_sl, price_at_event=p))
-                db_trade.stop_loss = new_sl
-                db_trade.is_break_even = True
+                db_trade.stop_loss, db_trade.is_break_even = new_sl, True
                 await session.commit()
                 asset.current_trade = db_trade
 
@@ -511,8 +405,7 @@ class BotCore:
             if not db_trade.is_trailing and r_multiple >= self.ts_trigger_r:
                 print(f"🚀 [{symbol}] Trailing Stop Activado.")
                 if db_trade.binance_tp_id: await self.client.cancel_order(symbol, db_trade.binance_tp_id)
-                db_trade.is_trailing = True
-                db_trade.take_profit = 0.0
+                db_trade.is_trailing, db_trade.take_profit = True, 0.0
                 await session.commit()
 
             # Nivel 3: Trailing (ATR vs Agresivo)
@@ -521,7 +414,7 @@ class BotCore:
                     distancia = abs(p - entry) * self.agg_ts_percent
                     event_type = 'TRAILING_AGGRESSIVE'
                 else:
-                    distancia = atr * self.ts_distance_atr 
+                    distancia = atr * self.ts_distance_atr
                     event_type = 'TRAILING_ATR'
 
                 potential_ts = p - distancia if is_long else p + distancia
@@ -531,8 +424,7 @@ class BotCore:
                 elif not is_long and potential_ts < db_trade.stop_loss: move_sl = True
 
                 if move_sl:
-                    old_sl = db_trade.stop_loss
-                    new_sl = float(potential_ts)
+                    old_sl, new_sl = db_trade.stop_loss, float(potential_ts)
                     print(f"📈[{symbol}] Ajuste {event_type}. SL: {old_sl} -> {new_sl}")
 
                     if db_trade.binance_sl_id:
@@ -562,9 +454,7 @@ class BotCore:
                 if db_trade.binance_sl_id: await self.client.cancel_order(symbol, db_trade.binance_sl_id)
                 if db_trade.binance_tp_id: await self.client.cancel_order(symbol, db_trade.binance_tp_id)
 
-                db_trade.status = 'CLOSED'
-                db_trade.exit_price = p
-                db_trade.exit_time = datetime.utcnow()
+                db_trade.status, db_trade.exit_price, db_trade.exit_time = 'CLOSED', p, datetime.utcnow()
                 pnl = (p - entry) * db_trade.quantity if is_long else (entry - p) * db_trade.quantity
                 db_trade.realized_pnl = round(pnl, 2)
                 db_trade.roe_percent = round((pnl / (entry * db_trade.quantity)) * 100, 2)
@@ -572,27 +462,3 @@ class BotCore:
                 await session.commit()
                 asset.is_in_position = False
                 asset.current_trade = None
-
-                # ==============================================================
-                # NUEVO: PROTOCOLO POST-TRADE (COOLDOWN Y KILL-SWITCH DIARIO)
-                # ==============================================================
-                today_str = datetime.utcnow().strftime("%Y-%m-%d")
-                
-                # Limpiar la memoria si cambió de día UTC
-                if asset.last_trade_date != today_str:
-                    asset.consecutive_losses = 0
-                    asset.last_trade_date = today_str
-
-                if pnl < 0:
-                    asset.consecutive_losses += 1
-                    if asset.consecutive_losses >= 2:
-                        print(f"💀 KILL-SWITCH DIARIO [{symbol}]: 2 pérdidas consecutivas. Baneado por 12 horas.")
-                        asset.cooldown_until = time.time() + (12 * 3600) # 12 horas de castigo
-                    else:
-                        print(f"⏳ COOLDOWN[{symbol}]: Pérdida registrada. Pausa obligatoria de 1 Hora.")
-                        asset.cooldown_until = time.time() + 3600 # 1 hora
-                else:
-                    asset.consecutive_losses = 0 # Rompió la racha perdedora
-                    print(f"⏳ COOLDOWN [{symbol}]: Ganancia asegurada. Pausa de 1 Hora para evitar overtrading.")
-                    asset.cooldown_until = time.time() + 3600 # 1 hora
-                # ==============================================================

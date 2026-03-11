@@ -82,83 +82,70 @@ class BinanceFuturesClient:
 
     async def place_atomic_trade(self, symbol, side, amount, sl_price, tp_price):
         """
-        EJECUCIÓN RÁPIDA SECUENCIAL CON LIMIT STOPS.
-        Evita el error -4120 usando STOP y TAKE_PROFIT (Limit) en lugar de Market.
+        EJECUCIÓN RÁPIDA SECUENCIAL.
+        Binance prohíbe enviar Stop Loss y Take Profit en el endpoint de Batch Orders.
+        Esta función ejecuta la entrada y luego dispara las protecciones concurrentemente.
         """
         if self.environment == 'dry_run':
             return[{"orderId": "sim_entry"}, {"orderId": "sim_sl"}, {"orderId": "sim_tp"}]
 
+        symbol_bin = symbol.replace('/', '')
         exit_side = 'SELL' if side == 'BUY' else 'BUY'
         
-        # 1. Formatear precisión exacta de Binance
-        q = float(self.exchange.amount_to_precision(symbol, amount))
-        sl_trigger = float(self.exchange.price_to_precision(symbol, sl_price))
-        tp_trigger = float(self.exchange.price_to_precision(symbol, tp_price))
-
-        # 2. Calcular los Precios Límite (1% de Slippage para asegurar ejecución instantánea)
-        if side == 'BUY':
-            # LONG: SL está abajo (Límite peor que trigger), TP está arriba (Límite peor que trigger)
-            sl_limit = float(self.exchange.price_to_precision(symbol, sl_trigger * 0.99))
-            tp_limit = float(self.exchange.price_to_precision(symbol, tp_trigger * 0.99))
-        else:
-            # SHORT: SL está arriba (Límite peor), TP está abajo (Límite peor)
-            sl_limit = float(self.exchange.price_to_precision(symbol, sl_trigger * 1.01))
-            tp_limit = float(self.exchange.price_to_precision(symbol, tp_trigger * 1.01))
+        # Formatear precisión
+        q = self.exchange.amount_to_precision(symbol, amount)
+        sl_trigger = self.exchange.price_to_precision(symbol, sl_price)
+        tp_trigger = self.exchange.price_to_precision(symbol, tp_price)
 
         print(f"   📦 Ejecutando Entrada a Mercado ({side})...")
         try:
-            # --- 1. EJECUTAR ENTRADA (CCXT Nativo) ---
-            entry_res = await self.exchange.create_order(
-                symbol=symbol,
-                type='MARKET',
-                side=side,
-                amount=q
-            )
+            # 1. EJECUTAR ENTRADA A MERCADO (Aislada para no romper la regla Batch)
+            entry_res = await self.exchange.fapiprivate_post_order({
+                'symbol': symbol_bin,
+                'side': side,
+                'type': 'MARKET',
+                'quantity': q
+            })
             
-            # Si falla la entrada por saldo u otro error, abortamos
-            if 'info' in entry_res and entry_res.get('info', {}).get('code'):
-                return [{'code': entry_res['info']['code'], 'msg': entry_res['info'].get('msg')}]
+            # Si la entrada falló (ej. Saldo insuficiente), abortamos inmediatamente
+            if 'code' in entry_res:
+                return [entry_res]
             
-            print(f"   🛡️ Entrada exitosa. Disparando Hard Stops (Limit)...")
+            print(f"   🛡️ Entrada exitosa. Disparando Hard Stops...")
             
-            # --- 2. DISPARAR PROTECCIONES CONCURRENTES (CCXT Nativo) ---
-            # Usar create_order de CCXT asegura que los endpoints se mapeen correctamente
-            sl_task = self.exchange.create_order(
-                symbol=symbol,
-                type='STOP', # Es un Stop-Limit
-                side=exit_side,
-                amount=q,
-                price=sl_limit, # Precio en el libro
-                params={'stopPrice': sl_trigger, 'reduceOnly': True} # Disparador
-            )
+            # 2. DISPARAR STOPS AL MISMO TIEMPO (Concurrencia)
+            # Usamos STOP_MARKET y closePosition='true' (El estándar oficial de Binance)
+            sl_task = self.exchange.fapiprivate_post_order({
+                'symbol': symbol_bin,
+                'side': exit_side,
+                'type': 'STOP_MARKET',
+                'stopPrice': sl_trigger,
+                'closePosition': 'true',
+                'workingType': 'MARK_PRICE'
+            })
             
-            tp_task = self.exchange.create_order(
-                symbol=symbol,
-                type='TAKE_PROFIT', # Es un Take-Profit-Limit
-                side=exit_side,
-                amount=q,
-                price=tp_limit, # Precio en el libro
-                params={'stopPrice': tp_trigger, 'reduceOnly': True} # Disparador
-            )
+            tp_task = self.exchange.fapiprivate_post_order({
+                'symbol': symbol_bin,
+                'side': exit_side,
+                'type': 'TAKE_PROFIT_MARKET',
+                'stopPrice': tp_trigger,
+                'closePosition': 'true',
+                'workingType': 'MARK_PRICE'
+            })
             
-            # Esperar a que Binance responda a ambos
+            # Esperamos a que ambos respondan. Si uno da error de API, lo atrapamos sin romper Python.
             stops_res = await asyncio.gather(sl_task, tp_task, return_exceptions=True)
             
-            # Formatear errores si los hay para el "Scanner de Rechazos"
+            # Formatear respuestas para que el engine.py las entienda
             sl_res = stops_res[0] if isinstance(stops_res[0], dict) else {'code': -1, 'msg': str(stops_res[0])}
             tp_res = stops_res[1] if isinstance(stops_res[1], dict) else {'code': -1, 'msg': str(stops_res[1])}
             
-            # Devolver el lote de respuestas para la Base de Datos
-            # Mapeamos 'id' a 'orderId' para mantener compatibilidad con tu motor
-            if 'id' in entry_res: entry_res['orderId'] = entry_res['id']
-            if 'id' in sl_res: sl_res['orderId'] = sl_res['id']
-            if 'id' in tp_res: tp_res['orderId'] = tp_res['id']
-
+            # Devolver el formato exacto que espera el Motor
             return[entry_res, sl_res, tp_res]
 
         except Exception as e:
             print(f"❌ Error crítico en ejecución rápida: {e}")
-            return [{'code': -1, 'msg': str(e)}]
+            return[{'code': -1, 'msg': str(e)}]
 
     async def place_order(self, symbol, side, amount):
         try:
@@ -206,27 +193,24 @@ class BinanceFuturesClient:
                 print(f"⚠️ Error consultando posiciones vivas: {e}")
             return {}
 
-    async def panic_close_position(self, symbol: str, side: str, amount: float):
+    async def panic_close_position(self, symbol: str, side: str):
         """
-        Cierra una posición a mercado usando la cantidad exacta y reduceOnly.
-        Esto evita el error -4136 de Binance.
+        Cierra una posición abierta a mercado de forma bruta usando closePosition.
+        Usado por el Orphan Sweeper para limpiar operaciones no registradas.
         """
         if self.environment == 'dry_run': return True
         try:
             symbol_bin = symbol.replace('/', '')
             exit_side = 'SELL' if side == 'LONG' else 'BUY'
             
-            # Formatear la cantidad a la precisión exacta de Binance
-            q = self.exchange.amount_to_precision(symbol, amount)
-            
+            # CORRECCIÓN: Binance prohíbe usar 'reduceOnly' si ya se está usando 'closePosition'
             params = {
                 'symbol': symbol_bin,
                 'side': exit_side,
                 'type': 'MARKET',
-                'quantity': q,
-                'reduceOnly': 'true' # La forma correcta para Market orders
+                'closePosition': 'true' # Esto es suficiente para cerrar el 100%
             }
-            print(f"   🧹 Enviando Panic Close a Binance para {symbol} ({exit_side} {q})...")
+            print(f"   🧹 Enviando Panic Close a Binance para {symbol} ({exit_side})...")
             return await self.exchange.fapiprivate_post_order(params)
         except Exception as e:
             print(f"❌ Error al ejecutar Panic Close en {symbol}: {e}")
@@ -255,17 +239,3 @@ class BinanceFuturesClient:
         except Exception as e:
             print(f"❌ Error consultando detalles de orden {order_id}: {e}")
             return None
-
-    async def get_bid_ask(self, symbol: str):
-        """
-        Consulta la punta del libro de órdenes para conocer el Bid (Comprador) y Ask (Vendedor).
-        Se usa para calcular el Spread antes de abrir una operación.
-        """
-        try:
-            ticker = await self.exchange.fetch_ticker(symbol)
-            bid = float(ticker.get('bid', 0.0))
-            ask = float(ticker.get('ask', 0.0))
-            return bid, ask
-        except Exception as e:
-            print(f"⚠️ Aviso: No se pudo obtener Bid/Ask para {symbol}")
-            return 0.0, 0.0

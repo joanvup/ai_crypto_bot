@@ -206,27 +206,24 @@ class BinanceFuturesClient:
                 print(f"⚠️ Error consultando posiciones vivas: {e}")
             return {}
 
-    async def panic_close_position(self, symbol: str, side: str, amount: float):
+    async def panic_close_position(self, symbol: str, side: str):
         """
-        Cierra una posición a mercado usando la cantidad exacta y reduceOnly.
-        Esto evita el error -4136 de Binance.
+        Cierra una posición abierta a mercado de forma bruta usando closePosition.
+        Usado por el Orphan Sweeper para limpiar operaciones no registradas.
         """
         if self.environment == 'dry_run': return True
         try:
             symbol_bin = symbol.replace('/', '')
             exit_side = 'SELL' if side == 'LONG' else 'BUY'
             
-            # Formatear la cantidad a la precisión exacta de Binance
-            q = self.exchange.amount_to_precision(symbol, amount)
-            
+            # CORRECCIÓN: Binance prohíbe usar 'reduceOnly' si ya se está usando 'closePosition'
             params = {
                 'symbol': symbol_bin,
                 'side': exit_side,
                 'type': 'MARKET',
-                'quantity': q,
-                'reduceOnly': 'true' # La forma correcta para Market orders
+                'closePosition': 'true' # Esto es suficiente para cerrar el 100%
             }
-            print(f"   🧹 Enviando Panic Close a Binance para {symbol} ({exit_side} {q})...")
+            print(f"   🧹 Enviando Panic Close a Binance para {symbol} ({exit_side})...")
             return await self.exchange.fapiprivate_post_order(params)
         except Exception as e:
             print(f"❌ Error al ejecutar Panic Close en {symbol}: {e}")

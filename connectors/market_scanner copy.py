@@ -8,55 +8,61 @@ load_dotenv()
 class MarketScanner:
     def __init__(self):
         self.environment = os.getenv("ENVIRONMENT", "testnet").lower()
-        # Convertimos 0.05 a 0.0005 (formato decimal matemático)
-        self.funding_tolerance = float(os.getenv("MAX_FUNDING_RATE_TOLERANCE", "0.05")) / 100.0
         
         self.exchange = ccxt.binance({
             'enableRateLimit': True,
-            'options': {'defaultType': 'future'}
+            'options': {
+                'defaultType': 'future',
+            }
         })
+        
         if self.environment == 'testnet':
             self.exchange.set_sandbox_mode(True)
 
     async def get_top_assets(self, limit: int = 10) -> list:
-        print(f"🌍 Escaneando mercado global de Binance Futuros (TOP {limit})...")
+        """
+        Descarga todos los tickers de Binance Futuros, filtra los inactivos/deslistados,
+        y devuelve los 'limit' activos con mayor volumen en USDT.
+        """
+        print(f"🌍 Escaneando mercado global de Binance Futuros para obtener el TOP {limit}...")
         try:
+            # 1. OBLIGATORIO: Cargar mercados primero para conocer el estado real de cada moneda
             await self.exchange.load_markets()
-            tickers = await self.exchange.fetch_tickers()
             
-            # Descargamos TODAS las tasas de financiación de golpe para no saturar la API
-            try:
-                funding_rates = await self.exchange.fetch_funding_rates()
-            except:
-                funding_rates = {}
+            # 2. Descargar todos los tickers
+            tickers = await self.exchange.fetch_tickers()
             
             valid_pairs =[]
             
             for symbol, data in tickers.items():
                 if symbol.endswith(':USDT'):
+                    # Buscar las propiedades del mercado en la base de datos de CCXT
                     market = self.exchange.markets.get(symbol, {})
+                    
+                    # Extraer el estado original de Binance
                     info = market.get('info', {})
                     status = info.get('status', '')
                     is_active = market.get('active', False)
                     
+                    # 3. FILTRO ESTRICTO: Solo monedas que están operando AHORA MISMO
                     if is_active and status == 'TRADING':
                         volume = float(data.get('quoteVolume', 0.0))
                         
+                        # 4. Filtro de liquidez real
                         if volume > 0:
-                            # --- ESCUDO ANTI-FUNDING EN EL ESCÁNER ---
-                            f_rate_data = funding_rates.get(symbol, {})
-                            f_rate = abs(float(f_rate_data.get('fundingRate', 0.0)))
-                            
-                            if f_rate > self.funding_tolerance:
-                                continue # IGNORA LA MONEDA TÓXICA, no la metas al Top 20
-                                
                             clean_symbol = symbol.split(':')[0]
-                            valid_pairs.append({'symbol': clean_symbol, 'volume': volume})
+                            valid_pairs.append({
+                                'symbol': clean_symbol,
+                                'volume': volume
+                            })
             
+            # Ordenar de mayor a menor según el volumen en USDT
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
+            
+            # Extraer solo los nombres
             top_assets = [pair['symbol'] for pair in valid_pairs[:limit]]
             
-            print(f"✅ Top {limit} Activos (Limpios de Funding abusivo): {', '.join(top_assets)}")
+            print(f"✅ Top {limit} Activos 100% TRADING seleccionados: {', '.join(top_assets)}")
             return top_assets
             
         except Exception as e:
