@@ -22,9 +22,9 @@ class MarketScanner:
         print(f"🌍 Escaneando mercado global de Binance Futuros (TOP {limit})...")
         try:
             await self.exchange.load_markets()
-            # fetch_tickers trae el volumen y también el bid/ask actual
             tickers = await self.exchange.fetch_tickers()
             
+            # Descargamos TODAS las tasas de financiación de golpe para no saturar la API
             try:
                 funding_rates = await self.exchange.fetch_funding_rates()
             except:
@@ -42,18 +42,13 @@ class MarketScanner:
                     if is_active and status == 'TRADING':
                         volume = float(data.get('quoteVolume', 0.0))
                         
-                        # --- NUEVO ESCUDO: EL DETECTOR DE MENTIRAS DEL TESTNET ---
-                        # Además de volumen, verificamos que el libro de órdenes tenga vida
-                        bid = float(data.get('bid', 0.0) or 0.0)
-                        ask = float(data.get('ask', 0.0) or 0.0)
-                        
-                        if volume > 0 and bid > 0 and ask > 0:
-                            # Filtro Anti-Funding
+                        if volume > 0:
+                            # --- ESCUDO ANTI-FUNDING EN EL ESCÁNER ---
                             f_rate_data = funding_rates.get(symbol, {})
                             f_rate = abs(float(f_rate_data.get('fundingRate', 0.0)))
                             
                             if f_rate > self.funding_tolerance:
-                                continue 
+                                continue # IGNORA LA MONEDA TÓXICA, no la metas al Top 20
                                 
                             clean_symbol = symbol.split(':')[0]
                             valid_pairs.append({'symbol': clean_symbol, 'volume': volume})
@@ -61,12 +56,12 @@ class MarketScanner:
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
             top_assets = [pair['symbol'] for pair in valid_pairs[:limit]]
             
-            print(f"✅ Top {limit} Activos (Limpios y 100% Líquidos): {', '.join(top_assets)}")
+            print(f"✅ Top {limit} Activos (Limpios de Funding abusivo): {', '.join(top_assets)}")
             return top_assets
             
         except Exception as e:
             print(f"❌ Error escaneando el mercado: {e}")
-            return['BTC/USDT', 'ETH/USDT'] 
+            return ['BTC/USDT', 'ETH/USDT'] 
         finally:
             await self.exchange.close()
 

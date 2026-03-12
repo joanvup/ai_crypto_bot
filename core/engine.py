@@ -373,18 +373,24 @@ class BotCore:
             size = float(self.risk.calculate_position_size(balance, theoretical_price, sl_initial))
             if size <= 0: return
             # ==============================================================
-            # NUEVO: FILTRO DE SPREAD (ESCUDO ANTI-MICROCOINS COMO PORT3)
+            # NUEVO: FILTRO DE SPREAD Y LIQUIDEZ (ESCUDO ANTI-MICROCOINS)
             # ==============================================================
             bid, ask = await self.client.get_bid_ask(symbol)
-            if bid > 0 and ask > 0:
-                spread = ask - bid
-                sl_distance = abs(theoretical_price - sl_initial)
+            
+            # 1. Si no hay puntas de compra/venta, la moneda está muerta en el Testnet.
+            if bid <= 0 or ask <= 0:
+                print(f"🛑 TRADE ABORTADO [{symbol}]: Libro de órdenes vacío (No Bid/Ask). Moneda zombie.")
+                asset.cooldown_until = time.time() + (24 * 3600) # Baneo de 24 horas
+                return
                 
-                # Si el Spread se come más del 30% de tu distancia de Stop Loss, es un ROBO.
-                if sl_distance > 0 and spread > (sl_distance * 0.30):
-                    print(f"🛑 TRADE ABORTADO [{symbol}]: Spread abusivo (${spread:.6f}). Freno anti-liquidación activado.")
-                    asset.cooldown_until = time.time() + 300 # Cuarentena de 5 minutos
-                    return
+            spread = ask - bid
+            sl_distance = abs(theoretical_price - sl_initial)
+            
+            # 2. Si el spread se come el 30% del riesgo, es un robo.
+            if sl_distance > 0 and spread > (sl_distance * 0.30):
+                print(f"🛑 TRADE ABORTADO[{symbol}]: Spread abusivo (${spread:.6f}). Freno anti-liquidación activado.")
+                asset.cooldown_until = time.time() + 300 # Cuarentena 5 minutos
+                return
             # ==============================================================
             # --- NUEVO: REVISIÓN DE LÍMITES DE BINANCE ANTES DE EJECUTAR ---
             try:
@@ -408,9 +414,16 @@ class BotCore:
                 # --- NUEVO: ACTIVAR COOLDOWN SI HAY ERROR ---
                 if 'code' in entry_res:
                     error_msg = entry_res.get('msg', 'Error desconocido')
+                    error_code = str(entry_res.get('code', ''))
                     print(f"🚨 Binance rechazó la orden en {symbol}: {error_msg}")
-                    print(f"⏳ {symbol} puesto en Cuarentena por 5 minutos.")
-                    asset.cooldown_until = time.time() + 300 # 5 minutos de pausa
+                    
+                    # --- AUTO-BANEO PARA EL ERROR DE TESTNET (-4005) ---
+                    if "-4005" in error_code or "max quantity" in error_msg.lower():
+                        print(f"💀 BANEO PERMANENTE: {symbol} superó el límite de Testnet. Ignorando por 24 horas.")
+                        asset.cooldown_until = time.time() + (24 * 3600) # 24 horas de baneo
+                    else:
+                        print(f"⏳ {symbol} puesto en Cuarentena por 5 minutos.")
+                        asset.cooldown_until = time.time() + 300 
                     return
                 # ---------------------------------------------
                 # ======================================================
@@ -458,15 +471,16 @@ class BotCore:
             error_msg = str(e)
             print(f"❌ Error ejecutando trade para {symbol}: {error_msg}")
             
-            # --- AUTO-CURACIÓN DEL ERROR -1021 ---
             if "-1021" in error_msg or "Timestamp" in error_msg:
-                print(f"⏱️ Desfase de reloj detectado al operar {symbol}. Resincronizando de emergencia...")
-                # Lanzamos la sincronización sin bloquear el código
+                print(f"⏱️ Desfase de reloj detectado al operar {symbol}. Resincronizando...")
                 asyncio.create_task(self.client.exchange.load_time_difference())
-            
-            # --- CAJA DE PENALIZACIÓN (COOLDOWN) ---
-            print(f"⏳ {symbol} puesto en Cuarentena por 5 minutos por fallo crítico.")
-            asset.cooldown_until = time.time() + 300
+                asset.cooldown_until = time.time() + 300
+            elif "-4005" in error_msg or "max quantity" in error_msg.lower():
+                print(f"💀 BANEO PERMANENTE: {symbol} superó el límite de Testnet por excepción. Ignorando por 24 horas.")
+                asset.cooldown_until = time.time() + (24 * 3600)
+            else:
+                print(f"⏳ {symbol} puesto en Cuarentena por 5 minutos por fallo crítico.")
+                asset.cooldown_until = time.time() + 300
 
         finally:
             asset.trade_in_progress = False
