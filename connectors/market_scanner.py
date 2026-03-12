@@ -16,7 +16,7 @@ class MarketScanner:
             'options': {'defaultType': 'future'}
         })
         if self.environment == 'testnet':
-            self.exchange.set_sandbox_mode(True)
+            self.exchange.enable_demo_trading(True) # <--- NUEVA FORMA DE BINANCE DEMO
 
     async def get_top_assets(self, limit: int = 10) -> list:
         print(f"🌍 Escaneando mercado global de Binance Futuros (TOP {limit})...")

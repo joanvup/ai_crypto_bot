@@ -18,7 +18,7 @@ class BinanceFuturesClient:
             'options': {'defaultType': 'future', 'adjustForTimeDifference': True}
         })
         if self.environment == 'testnet':
-            self.exchange.set_sandbox_mode(True)
+            self.exchange.enable_demo_trading(True) # <--- NUEVA FORMA DE BINANCE DEMO
 
     async def get_balance(self):
         """Obtiene el balance de la cuenta. En dry_run lee del .env"""
