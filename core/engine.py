@@ -378,10 +378,10 @@ class BotCore:
             bid, ask = await self.client.get_bid_ask(symbol)
             
             # 1. Si no hay puntas de compra/venta, la moneda está muerta en el Testnet.
-            if bid <= 0 or ask <= 0:
-                print(f"🛑 TRADE ABORTADO [{symbol}]: Libro de órdenes vacío (No Bid/Ask). Moneda zombie.")
-                asset.cooldown_until = time.time() + (24 * 3600) # Baneo de 24 horas
-                return
+            #if bid <= 0 or ask <= 0:
+            #    print(f"🛑 TRADE ABORTADO [{symbol}]: Libro de órdenes vacío (No Bid/Ask). Moneda zombie.")
+            #    asset.cooldown_until = time.time() + (24 * 3600) # Baneo de 24 horas
+            #    return
                 
             spread = ask - bid
             sl_distance = abs(theoretical_price - sl_initial)
