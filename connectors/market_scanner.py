@@ -30,11 +30,21 @@ class MarketScanner:
                 funding_rates = await self.exchange.fetch_funding_rates()
             except:
                 funding_rates = {}
+                
+            # --- NUEVO: LEER LA LISTA NEGRA DEL .ENV ---
+            blacklist_str = os.getenv("BLACKLISTED_ASSETS", "")
+            blacklist =[sym.strip().upper() for sym in blacklist_str.split(',')] if blacklist_str else[]
             
             valid_pairs =[]
             
             for symbol, data in tickers.items():
                 if symbol.endswith(':USDT'):
+                    clean_symbol = symbol.split(':')[0]
+                    
+                    # 1. FILTRO DE LISTA NEGRA (El guardia de seguridad)
+                    if clean_symbol in blacklist:
+                        continue # Es una moneda prohibida, la saltamos
+                    
                     market = self.exchange.markets.get(symbol, {})
                     info = market.get('info', {})
                     status = info.get('status', '')
@@ -44,35 +54,18 @@ class MarketScanner:
                         volume = float(data.get('quoteVolume', 0.0))
                         
                         if volume > 0:
-                            # ==============================================================
-                            # NUEVO ESCUDO EN EL ESCÁNER: FILTRO DE ELECTROCARDIOGRAMA (24H)
-                            # ==============================================================
-                            high_24h = float(data.get('high', 0.0) or 0.0)
-                            low_24h = float(data.get('low', 0.0) or 0.0)
-                            
-                            if low_24h > 0:
-                                range_pct = ((high_24h - low_24h) / low_24h) * 100
-                                
-                                # Si en todo el día se movió menos del 0.1%, es una trampa del Testnet (Ping-Pong)
-                                if range_pct < 0.1:
-                                    continue # IGNORAR MONEDA ZOMBIE INMEDIATAMENTE
-                            # ==============================================================
-
-                            # Filtro Anti-Funding
+                            # 2. FILTRO ANTI-FUNDING
                             f_rate_data = funding_rates.get(symbol, {})
                             f_rate = abs(float(f_rate_data.get('fundingRate', 0.0)))
                             
-                            if f_rate > self.funding_tolerance:
-                                continue 
-                                
-                            clean_symbol = symbol.split(':')[0]
-                            valid_pairs.append({'symbol': clean_symbol, 'volume': volume})
+                            if f_rate <= self.funding_tolerance:
+                                valid_pairs.append({'symbol': clean_symbol, 'volume': volume})
             
-            # Ordenar por volumen real de mayor a menor
+            # Ordenar de mayor a menor volumen y cortar el Top
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
             top_assets = [pair['symbol'] for pair in valid_pairs[:limit]]
             
-            print(f"✅ Top {limit} Activos (Limpios, Reales y 100% Líquidos): {', '.join(top_assets)}")
+            print(f"✅ Top {limit} Activos (Aplicando Lista Negra) seleccionados: {', '.join(top_assets)}")
             return top_assets
             
         except Exception as e:
