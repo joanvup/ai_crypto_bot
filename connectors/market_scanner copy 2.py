@@ -8,17 +8,15 @@ load_dotenv()
 class MarketScanner:
     def __init__(self):
         self.environment = os.getenv("ENVIRONMENT", "testnet").lower()
+        # Convertimos 0.05 a 0.0005 (formato decimal matemático)
         self.funding_tolerance = float(os.getenv("MAX_FUNDING_RATE_TOLERANCE", "0.05")) / 100.0
         
         self.exchange = ccxt.binance({
             'enableRateLimit': True,
-            'options': {
-                'defaultType': 'future',
-            }
+            'options': {'defaultType': 'future'}
         })
-        
         if self.environment == 'testnet':
-            self.exchange.enable_demo_trading(True)
+            self.exchange.enable_demo_trading(True) # <--- NUEVA FORMA DE BINANCE DEMO
 
     async def get_top_assets(self, limit: int = 10) -> list:
         print(f"🌍 Escaneando mercado global de Binance Futuros (TOP {limit})...")
@@ -26,6 +24,7 @@ class MarketScanner:
             await self.exchange.load_markets()
             tickers = await self.exchange.fetch_tickers()
             
+            # Descargamos TODAS las tasas de financiación de golpe para no saturar la API
             try:
                 funding_rates = await self.exchange.fetch_funding_rates()
             except:
@@ -44,40 +43,25 @@ class MarketScanner:
                         volume = float(data.get('quoteVolume', 0.0))
                         
                         if volume > 0:
-                            # ==============================================================
-                            # NUEVO ESCUDO EN EL ESCÁNER: FILTRO DE ELECTROCARDIOGRAMA (24H)
-                            # ==============================================================
-                            high_24h = float(data.get('high', 0.0) or 0.0)
-                            low_24h = float(data.get('low', 0.0) or 0.0)
-                            
-                            if low_24h > 0:
-                                range_pct = ((high_24h - low_24h) / low_24h) * 100
-                                
-                                # Si en todo el día se movió menos del 0.1%, es una trampa del Testnet (Ping-Pong)
-                                if range_pct < 0.1:
-                                    continue # IGNORAR MONEDA ZOMBIE INMEDIATAMENTE
-                            # ==============================================================
-
-                            # Filtro Anti-Funding
+                            # --- ESCUDO ANTI-FUNDING EN EL ESCÁNER ---
                             f_rate_data = funding_rates.get(symbol, {})
                             f_rate = abs(float(f_rate_data.get('fundingRate', 0.0)))
                             
                             if f_rate > self.funding_tolerance:
-                                continue 
+                                continue # IGNORA LA MONEDA TÓXICA, no la metas al Top 20
                                 
                             clean_symbol = symbol.split(':')[0]
                             valid_pairs.append({'symbol': clean_symbol, 'volume': volume})
             
-            # Ordenar por volumen real de mayor a menor
             valid_pairs.sort(key=lambda x: x['volume'], reverse=True)
             top_assets = [pair['symbol'] for pair in valid_pairs[:limit]]
             
-            print(f"✅ Top {limit} Activos (Limpios, Reales y 100% Líquidos): {', '.join(top_assets)}")
+            print(f"✅ Top {limit} Activos (Limpios de Funding abusivo): {', '.join(top_assets)}")
             return top_assets
             
         except Exception as e:
             print(f"❌ Error escaneando el mercado: {e}")
-            return['BTC/USDT', 'ETH/USDT'] 
+            return ['BTC/USDT', 'ETH/USDT'] 
         finally:
             await self.exchange.close()
 
@@ -85,7 +69,7 @@ class MarketScanner:
 if __name__ == "__main__":
     async def test_scanner():
         scanner = MarketScanner()
-        top_10 = await scanner.get_top_assets(limit=20)
+        top_10 = await scanner.get_top_assets(limit=10)
         print("\nLista final para el bot:", top_10)
 
     import sys
