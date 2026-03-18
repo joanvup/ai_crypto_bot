@@ -280,7 +280,7 @@ class BotCore:
                     await asyncio.sleep(1)
                     continue
                 
-                # --- NUEVO: SISTEMA ANTI-SPAM (COOLDOWN) ---
+                # --- SISTEMA ANTI-SPAM (COOLDOWN) ---
                 if time.time() < asset.cooldown_until:
                     await asyncio.sleep(self.strategy_interval)
                     continue
@@ -291,6 +291,26 @@ class BotCore:
                         df = self.ta.apply_indicators(self.ta.prepare_dataframe(klines))
                         
                         if not df.empty:
+                            
+                            # ==============================================================
+                            # NUEVO: DETECTOR DE ELECTROCARDIOGRAMA (FLATLINE FILTER)
+                            # ==============================================================
+                            # Analizamos las últimas 10 velas (10 horas) para ver si el mercado está "vivo"
+                            if len(df) >= 10:
+                                last_10 = df.tail(10)
+                                max_high = float(last_10['high'].max())
+                                min_low = float(last_10['low'].min())
+                                
+                                if min_low > 0:
+                                    price_range_pct = ((max_high - min_low) / min_low) * 100
+                                    
+                                    # Si en 10 horas el precio se movió menos de un 0.05%, es un bot de ping-pong
+                                    if price_range_pct < 0.05:
+                                        print(f"\n💀 DETECTOR PING-PONG[{symbol}]: Rango 10h es solo {price_range_pct:.4f}%. Mercado simulado muerto. Baneo de 24h.")
+                                        asset.cooldown_until = time.time() + (24 * 3600) # Cuarentena 24 Horas
+                                        continue # Salta a la siguiente iteración (ignora la IA)
+                            # ==============================================================
+
                             if asset.current_price == 0.0:
                                 asset.current_price = float(df['close'].iloc[-1])
                                 
@@ -313,7 +333,6 @@ class BotCore:
                 error_msg = str(e)
                 if "-1021" in error_msg:
                     asyncio.create_task(self.client.exchange.load_time_difference())
-                pass
             
             await asyncio.sleep(self.strategy_interval)
 
